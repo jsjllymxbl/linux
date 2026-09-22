@@ -1,0 +1,787 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Xiaomi Mi 2 / Mi 2S (codename "aries")
+ *
+ * Hardware description derived from the downstream "aries" board files of the
+ * Xiaomi msm8960 kernel (arch/arm/mach-msm/board-aries*.c) and from the
+ * "mi2_p4_0917" schematic.
+ *
+ * The Mi 2 is an APQ8064 (Krait) handset with
+ *   - 2 GB LPDDR2, 16/32 GB eMMC (SDCC1, 8 bit)
+ *   - PM8921 + PM8821 PMICs
+ *   - WCN3660 (Riva) WiFi/BT/FM combo
+ *   - 4.3" 720x1280 command mode MIPI-DSI panel behind a Renesas bridge;
+ *     either a Hitachi or a Sharp panel, selected at runtime from the LCD ID
+ *     strap on PM8921 GPIO12
+ *   - Touch panel: Synaptics RMI4 (S3202 / BM001 / Trs_lb00) or Atmel
+ *     maXTouch (mXT336S / mXT384E), with three capacitive keys
+ *   - LIS3DH accel, L3GD20 gyro, AK8963 compass, ISL29029 ALS/prox,
+ *     BMP180 barometer
+ *   - BQ27520 fuel gauge, WCD9310 (Tabla) audio codec, LM3530 backlight,
+ *     LM3554 camera flash, SiI9244 MHL, eS310 voice processor
+ *   - MDM9215 modem attached over HSIC
+ *
+ * Peripherals that have neither an upstream driver nor a binding yet are
+ * documented here instead of being described as device tree nodes:
+ *   - LM3530 backlight         : gsbi1_i2c @0x38, enable via PM8921 GPIO13
+ *   - LM3554 camera flash      : gsbi1_i2c @0x53
+ *   - ISA1200 haptics          : gsbi1_i2c @0x48
+ *   - eS310 voice processor    : gsbi1_i2c @0x3e
+ *   - SiI9244 MHL bridge       : gsbi1_i2c @0x39/@0x3d/@0x49
+ *   - ISL29029 ALS/proximity   : gsbi2_i2c @0x44
+ *   - BQ27520 fuel gauge       : gsbi5_i2c @0x55 (gsbi5 has no i2c node in
+ *     qcom-apq8064.dtsi yet), interrupt on TLMM GPIO26 ("BATT_INT")
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/mfd/qcom-rpm.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+#include <dt-bindings/soc/qcom,gsbi.h>
+
+#include "qcom-apq8064-v2.0.dtsi"
+#include "pm8821.dtsi"
+#include "pm8921.dtsi"
+
+/ {
+	model = "Xiaomi Mi 2 (aries)";
+	compatible = "xiaomi,aries", "qcom,apq8064";
+	chassis-type = "handset";
+
+	aliases {
+		serial0 = &gsbi7_serial;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	/*
+	 * PM8921 GPIO5 switches the FET that powers the Synaptics S3202
+	 * touch controller (downstream "touchscreen power pin").
+	 */
+	vreg_touch: regulator-touch {
+		compatible = "regulator-fixed";
+		regulator-name = "touch_vdd";
+		regulator-min-microvolt = <2850000>;
+		regulator-max-microvolt = <2850000>;
+
+		gpio = <&pm8921_gpio 5 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+
+		startup-delay-us = <100000>;
+	};
+
+	/*
+	 * PM8921 GPIO23 ("SENSOR_AVDD_EN") drives the TPS22913B load switch
+	 * that feeds the sensors from PM8921 L9 (2.85 V).
+	 */
+	vreg_sensor_avdd: regulator-sensor-avdd {
+		compatible = "regulator-fixed";
+		regulator-name = "sensor_avdd";
+		regulator-min-microvolt = <2850000>;
+		regulator-max-microvolt = <2850000>;
+
+		vin-supply = <&pm8921_l9>;
+		gpio = <&pm8921_gpio 23 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+
+		startup-delay-us = <10000>;
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_keys_default>;
+
+		/*
+		 * Both volume keys are active high: the PM8921 pulls the
+		 * lines down and the key shorts them to S4.
+		 */
+		key-volume-up {
+			label = "Volume Up";
+			gpios = <&pm8921_gpio 1 GPIO_ACTIVE_HIGH>;
+			linux,code = <KEY_VOLUMEUP>;
+			debounce-interval = <15>;
+			wakeup-source;
+		};
+
+		key-volume-down {
+			label = "Volume Down";
+			gpios = <&pm8921_gpio 2 GPIO_ACTIVE_HIGH>;
+			linux,code = <KEY_VOLUMEDOWN>;
+			debounce-interval = <15>;
+			wakeup-source;
+		};
+	};
+
+	/*
+	 * The panel is a 720x1280 command mode DSI panel behind a Renesas
+	 * bridge; the Hitachi and Sharp variants differ only in their
+	 * initialization sequence and are told apart by the LCD ID strap
+	 * (PM8921 GPIO12, read as an input after the rails are up).
+	 *
+	 * Upstream has no driver for it yet, so the MDP4/DSI pipeline is
+	 * intentionally left disabled.  A driver derived from the
+	 * downstream drivers/video/msm/mipi_renesas.c is required, and it
+	 * needs:
+	 *   - VSP supply : PM8921 GPIO11 (LCD_DCDC_EN / ext_5p4v)
+	 *   - vddio      : PM8921 L23, LVS7
+	 *   - vdda/avdd  : PM8921 L2, L11
+	 *   - reset      : PM8921 GPIO25 (DISP_RESET_N, active low)
+	 *   - LCD ID     : PM8921 GPIO12 (input)
+	 *   - backlight  : LM3530 @0x38 on gsbi1_i2c, enable on PM8921 GPIO13
+	 *   - 4 DSI lanes, 24 bpp, hbp=14 hfp=220 hsw=12, vbp=7 vfp=7 vsw=1
+	 */
+};
+
+/* Debug UART, GPIO82 (TX) / GPIO83 (RX), "DEBUG_UART" on the schematic */
+&gsbi7 {
+	qcom,mode = <GSBI_PROT_I2C_UART>;
+	status = "okay";
+};
+
+&gsbi7_serial {
+	pinctrl-names = "default";
+	pinctrl-0 = <&gsbi7_uart_2pins>;
+	status = "okay";
+};
+
+/* "I2C1_APPS": backlight, camera flash, haptics, MHL, voice processor */
+&gsbi1 {
+	qcom,mode = <GSBI_PROT_I2C>;
+	status = "okay";
+};
+
+&gsbi1_i2c {
+	clock-frequency = <400000>;
+	status = "okay";
+};
+
+/* "I2C_SENS": on-sensor I2C bus, GPIO24 (SDA) / GPIO25 (SCL) */
+&gsbi2 {
+	qcom,mode = <GSBI_PROT_I2C>;
+	status = "okay";
+};
+
+&gsbi2_i2c {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	accelerometer@18 {
+		compatible = "st,lis3dh-accel";
+		reg = <0x18>;
+
+		interrupt-parent = <&tlmm_pinmux>;
+		interrupts = <22 IRQ_TYPE_EDGE_RISING>;
+		st,drdy-int-pin = <1>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&accel_int_default>;
+
+		vdd-supply = <&vreg_sensor_avdd>;
+		vddio-supply = <&pm8921_lvs4>;
+	};
+
+	gyroscope@6a {
+		compatible = "st,l3gd20-gyro";
+		reg = <0x6a>;
+
+		interrupt-parent = <&tlmm_pinmux>;
+		interrupts = <28 IRQ_TYPE_EDGE_RISING>;
+		st,drdy-int-pin = <2>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&gyro_int_default>;
+
+		vdd-supply = <&vreg_sensor_avdd>;
+		vddio-supply = <&pm8921_lvs4>;
+	};
+
+	/* COMPASS_RST is TLMM GPIO85, active low */
+	magnetometer@c {
+		compatible = "asahi-kasei,ak8963";
+		reg = <0x0c>;
+
+		reset-gpios = <&tlmm_pinmux 85 GPIO_ACTIVE_LOW>;
+
+		vdd-supply = <&vreg_sensor_avdd>;
+		vid-supply = <&pm8921_lvs4>;
+	};
+
+	pressure@77 {
+		compatible = "bosch,bmp180";
+		reg = <0x77>;
+
+		vdda-supply = <&vreg_sensor_avdd>;
+		vddd-supply = <&vreg_sensor_avdd>;
+	};
+};
+
+/* "I2C3_TS": touch panel, one of several variants is populated */
+&gsbi3 {
+	qcom,mode = <GSBI_PROT_I2C>;
+	status = "okay";
+};
+
+&gsbi3_i2c {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/*
+	 * All touch panel variants share the interrupt line (TLMM GPIO6),
+	 * the reset line (PM8921 GPIO8) and the PM8921 GPIO5 controlled
+	 * power switch.  Only one of them is fitted on a given unit, so
+	 * the nodes that do not match simply fail to probe.
+	 *
+	 *   Synaptics S3202  "s3202_ver5" (TPK)      @0x20
+	 *   Synaptics        "BM001"      (BIEL)     @0x22
+	 *   Synaptics        "Trs_lb00"   (Laibao)   @0x70
+	 *   Atmel mXT336S    (Wintek)                @0x4a, @0x4b
+	 *   Atmel mXT384E    (Wintek)                @0x4c
+	 */
+
+	touchscreen@20 {
+		compatible = "syna,rmi4-i2c";
+		reg = <0x20>;
+
+		interrupt-parent = <&tlmm_pinmux>;
+		interrupts = <6 IRQ_TYPE_LEVEL_LOW>;
+
+		/*
+		 * The reset line (PM8921 GPIO8) is not driven by the rmi4
+		 * driver, so it is deasserted through pinctrl instead.
+		 */
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_irq_default>, <&touch_reset_default>;
+
+		vdd-supply = <&vreg_touch>;
+		vio-supply = <&vreg_touch>;
+		syna,startup-delay-ms = <100>;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		rmi4-f01@1 {
+			reg = <0x1>;
+		};
+
+		rmi4-f11@11 {
+			reg = <0x11>;
+			syna,sensor-type = <1>;
+			touchscreen-size-x = <720>;
+			touchscreen-size-y = <1280>;
+		};
+
+		/* Capacitive keys: menu, home, back */
+		rmi4-f1a@1a {
+			reg = <0x1a>;
+			linux,keycodes = <KEY_MENU KEY_HOME KEY_BACK>;
+		};
+	};
+
+	touchscreen@22 {
+		compatible = "syna,rmi4-i2c";
+		reg = <0x22>;
+
+		interrupt-parent = <&tlmm_pinmux>;
+		interrupts = <6 IRQ_TYPE_LEVEL_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_irq_default>, <&touch_reset_default>;
+
+		vdd-supply = <&vreg_touch>;
+		vio-supply = <&vreg_touch>;
+		syna,startup-delay-ms = <100>;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		rmi4-f01@1 {
+			reg = <0x1>;
+		};
+
+		rmi4-f11@11 {
+			reg = <0x11>;
+			syna,sensor-type = <1>;
+			touchscreen-size-x = <720>;
+			touchscreen-size-y = <1280>;
+		};
+
+		rmi4-f1a@1a {
+			reg = <0x1a>;
+			linux,keycodes = <KEY_MENU KEY_HOME KEY_BACK>;
+		};
+	};
+
+	touchscreen@70 {
+		compatible = "syna,rmi4-i2c";
+		reg = <0x70>;
+
+		interrupt-parent = <&tlmm_pinmux>;
+		interrupts = <6 IRQ_TYPE_LEVEL_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_irq_default>, <&touch_reset_default>;
+
+		vdd-supply = <&vreg_touch>;
+		vio-supply = <&vreg_touch>;
+		syna,startup-delay-ms = <100>;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		rmi4-f01@1 {
+			reg = <0x1>;
+		};
+
+		rmi4-f11@11 {
+			reg = <0x11>;
+			syna,sensor-type = <1>;
+			touchscreen-size-x = <720>;
+			touchscreen-size-y = <1280>;
+		};
+
+		rmi4-f1a@1a {
+			reg = <0x1a>;
+			linux,keycodes = <KEY_MENU KEY_HOME KEY_BACK>;
+		};
+	};
+
+	touchscreen@4a {
+		compatible = "atmel,maxtouch";
+		reg = <0x4a>;
+
+		interrupt-parent = <&tlmm_pinmux>;
+		interrupts = <6 IRQ_TYPE_LEVEL_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_irq_default>, <&touch_reset_default>;
+
+		reset-gpios = <&pm8921_gpio 8 GPIO_ACTIVE_LOW>;
+
+		/* the module is fed through the PM8921 GPIO5 switch */
+		vdd-supply = <&vreg_touch>;
+		vdda-supply = <&vreg_touch>;
+
+		/* Capacitive keys: menu, home, back */
+		linux,keycodes = <KEY_MENU KEY_HOME KEY_BACK>;
+	};
+
+	touchscreen@4b {
+		compatible = "atmel,maxtouch";
+		reg = <0x4b>;
+
+		interrupt-parent = <&tlmm_pinmux>;
+		interrupts = <6 IRQ_TYPE_LEVEL_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_irq_default>, <&touch_reset_default>;
+
+		reset-gpios = <&pm8921_gpio 8 GPIO_ACTIVE_LOW>;
+
+		vdd-supply = <&vreg_touch>;
+		vdda-supply = <&vreg_touch>;
+
+		linux,keycodes = <KEY_MENU KEY_HOME KEY_BACK>;
+	};
+
+	touchscreen@4c {
+		compatible = "atmel,maxtouch";
+		reg = <0x4c>;
+
+		interrupt-parent = <&tlmm_pinmux>;
+		interrupts = <6 IRQ_TYPE_LEVEL_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_irq_default>, <&touch_reset_default>;
+
+		reset-gpios = <&pm8921_gpio 8 GPIO_ACTIVE_LOW>;
+
+		vdd-supply = <&vreg_touch>;
+		vdda-supply = <&vreg_touch>;
+
+		linux,keycodes = <KEY_MENU KEY_HOME KEY_BACK>;
+	};
+};
+
+/* eMMC (SDCC1, 8 bit, non removable) */
+&sdcc1 {
+	vmmc-supply = <&pm8921_l5>;
+	vqmmc-supply = <&pm8921_s4>;
+
+	status = "okay";
+};
+
+&usb_hs1_phy {
+	v3p3-supply = <&pm8921_l3>;
+	v1p8-supply = <&pm8921_l4>;
+};
+
+/* Micro USB, USB3 is routed to the SiI9244 MHL bridge */
+&usb1 {
+	dr_mode = "otg";
+	status = "okay";
+};
+
+/* WCN3660 WiFi / Bluetooth / FM, GPIO64..68 five wire interface */
+&riva {
+	pinctrl-names = "default";
+	pinctrl-0 = <&riva_wlan_pin_a>, <&riva_bt_pin_a>, <&riva_fm_pin_a>;
+
+	vddcx-supply = <&pm8921_s3>;
+	vddmx-supply = <&pm8921_l24>;
+	vddpx-supply = <&pm8921_s4>;
+
+	status = "okay";
+
+	iris {
+		vddxo-supply = <&pm8921_l4>;
+		vddrfa-supply = <&pm8921_s2>;
+		vddpa-supply = <&pm8921_l10>;
+		vdddig-supply = <&pm8921_lvs2>;
+	};
+};
+
+&gpu {
+	status = "okay";
+};
+
+&pm8821 {
+	interrupts-extended = <&tlmm_pinmux 76 IRQ_TYPE_LEVEL_LOW>;
+};
+
+&pm8921 {
+	interrupts-extended = <&tlmm_pinmux 74 IRQ_TYPE_LEVEL_LOW>;
+};
+
+&rpm {
+	regulators {
+		compatible = "qcom,rpm-pm8921-regulators";
+
+		vdd_l1_l2_l12_l18-supply = <&pm8921_s4>;
+		vdd_l24-supply = <&pm8921_s1>;
+		vdd_l25-supply = <&pm8921_s1>;
+		vdd_l26-supply = <&pm8921_s7>;
+		vdd_l27-supply = <&pm8921_s7>;
+		vdd_l28-supply = <&pm8921_s7>;
+		vin_lvs1_3_6-supply = <&pm8921_s4>;
+		vin_lvs2-supply = <&pm8921_s1>;
+		vin_lvs4_5_7-supply = <&pm8921_s4>;
+		vdd_ncp-supply = <&pm8921_l6>;
+
+		/* Buck SMPS */
+		pm8921_s1: s1 {
+			regulator-always-on;
+			regulator-min-microvolt = <1225000>;
+			regulator-max-microvolt = <1225000>;
+			qcom,switch-mode-frequency = <3200000>;
+			bias-pull-down;
+		};
+
+		/* wcnss_wlan.0-iris_vddrfa */
+		pm8921_s2: s2 {
+			regulator-min-microvolt = <1300000>;
+			regulator-max-microvolt = <1300000>;
+			qcom,switch-mode-frequency = <1600000>;
+			bias-pull-down;
+		};
+
+		/* msm_otg-HSUSB_VDDCX, wcnss_wlan.0-riva_vddcx */
+		pm8921_s3: s3 {
+			regulator-min-microvolt = <500000>;
+			regulator-max-microvolt = <1150000>;
+			qcom,switch-mode-frequency = <4800000>;
+			bias-pull-down;
+		};
+
+		/*
+		 * msm_sdcc.1-sdc_vdd_io
+		 * tabla2x-slim CDC_VDDA_RX/CDC_VDDA_TX/CDC_VDD_CP/VDDIO_CDC
+		 * wcnss_wlan.0-riva_vddpx
+		 */
+		pm8921_s4: s4 {
+			regulator-always-on;
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			qcom,switch-mode-frequency = <1600000>;
+			bias-pull-down;
+			qcom,force-mode = <QCOM_RPM_FORCE_MODE_AUTO>;
+		};
+
+		/* supplies vdd_l26, vdd_l27, vdd_l28 */
+		pm8921_s7: s7 {
+			regulator-min-microvolt = <1300000>;
+			regulator-max-microvolt = <1300000>;
+			qcom,switch-mode-frequency = <3200000>;
+		};
+
+		pm8921_s8: s8 {
+			regulator-min-microvolt = <2200000>;
+			regulator-max-microvolt = <2200000>;
+			qcom,switch-mode-frequency = <1600000>;
+		};
+
+		/* PMOS LDOs */
+		pm8921_l1: l1 {
+			regulator-always-on;
+			regulator-min-microvolt = <1100000>;
+			regulator-max-microvolt = <1100000>;
+			bias-pull-down;
+		};
+
+		/* mipi_dsi.1-dsi1_pll_vdda */
+		pm8921_l2: l2 {
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			bias-pull-down;
+		};
+
+		/* msm_otg-HSUSB_3p3 */
+		pm8921_l3: l3 {
+			regulator-min-microvolt = <3075000>;
+			regulator-max-microvolt = <3075000>;
+			bias-pull-down;
+		};
+
+		/* msm_otg-HSUSB_1p8, wcnss_wlan.0-iris_vddxo */
+		pm8921_l4: l4 {
+			regulator-always-on;
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			bias-pull-down;
+		};
+
+		/* msm_sdcc.1-sdc_vdd */
+		pm8921_l5: l5 {
+			regulator-min-microvolt = <2950000>;
+			regulator-max-microvolt = <2950000>;
+			bias-pull-down;
+		};
+
+		pm8921_l6: l6 {
+			regulator-min-microvolt = <2950000>;
+			regulator-max-microvolt = <2950000>;
+			bias-pull-down;
+		};
+
+		pm8921_l7: l7 {
+			regulator-min-microvolt = <1850000>;
+			regulator-max-microvolt = <2950000>;
+			bias-pull-down;
+		};
+
+		/* camera cam_vana */
+		pm8921_l8: l8 {
+			regulator-min-microvolt = <2700000>;
+			regulator-max-microvolt = <2800000>;
+			bias-pull-down;
+		};
+
+		pm8921_l9: l9 {
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
+			bias-pull-down;
+		};
+
+		/* wcnss_wlan.0-iris_vddpa */
+		pm8921_l10: l10 {
+			regulator-min-microvolt = <2900000>;
+			regulator-max-microvolt = <2900000>;
+			bias-pull-down;
+		};
+
+		/* mipi_dsi.1-dsi1_avdd */
+		pm8921_l11: l11 {
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
+			bias-pull-down;
+		};
+
+		/* camera cam_vdig */
+		pm8921_l12: l12 {
+			regulator-min-microvolt = <1050000>;
+			regulator-max-microvolt = <1200000>;
+			bias-pull-down;
+		};
+
+		pm8921_l14: l14 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			bias-pull-down;
+		};
+
+		pm8921_l15: l15 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <2950000>;
+			bias-pull-down;
+		};
+
+		/* camera cam_vaf */
+		pm8921_l16: l16 {
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+			bias-pull-down;
+		};
+
+		pm8921_l17: l17 {
+			regulator-min-microvolt = <2000000>;
+			regulator-max-microvolt = <2000000>;
+			bias-pull-down;
+		};
+
+		pm8921_l18: l18 {
+			regulator-min-microvolt = <1300000>;
+			regulator-max-microvolt = <1800000>;
+			bias-pull-down;
+		};
+
+		pm8921_l21: l21 {
+			regulator-min-microvolt = <1050000>;
+			regulator-max-microvolt = <1050000>;
+			bias-pull-down;
+		};
+
+		pm8921_l22: l22 {
+			regulator-min-microvolt = <2600000>;
+			regulator-max-microvolt = <2600000>;
+			bias-pull-down;
+		};
+
+		/* mipi_dsi.1-dsi_mi_vddio */
+		pm8921_l23: l23 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			bias-pull-down;
+		};
+
+		/* wcnss_wlan.0-riva_vddmx */
+		pm8921_l24: l24 {
+			regulator-min-microvolt = <750000>;
+			regulator-max-microvolt = <1150000>;
+			bias-pull-down;
+		};
+
+		/*
+		 * tabla2x-slim CDC_VDDA_A_1P2V / VDDD_CDC_D
+		 */
+		pm8921_l25: l25 {
+			regulator-always-on;
+			regulator-min-microvolt = <1250000>;
+			regulator-max-microvolt = <1250000>;
+			bias-pull-down;
+		};
+
+		/* pil_qdsp6v4.0-core_vdd */
+		pm8921_l26: l26 {
+			regulator-always-on;
+			regulator-min-microvolt = <375000>;
+			regulator-max-microvolt = <1050000>;
+			bias-pull-down;
+		};
+
+		/* pil_qdsp6v4.2-core_vdd */
+		pm8921_l27: l27 {
+			regulator-min-microvolt = <1100000>;
+			regulator-max-microvolt = <1100000>;
+		};
+
+		/* pil_qdsp6v4.1-core_vdd */
+		pm8921_l28: l28 {
+			regulator-min-microvolt = <1050000>;
+			regulator-max-microvolt = <1050000>;
+			bias-pull-down;
+		};
+
+		pm8921_l29: l29 {
+			regulator-min-microvolt = <2000000>;
+			regulator-max-microvolt = <2000000>;
+			bias-pull-down;
+		};
+
+		/* Low voltage switches */
+		pm8921_lvs1: lvs1 {
+			bias-pull-down;
+		};
+
+		/* wcnss_wlan.0-iris_vdddig */
+		pm8921_lvs2: lvs2 {
+			bias-pull-down;
+		};
+
+		pm8921_lvs3: lvs3 {
+			bias-pull-down;
+		};
+
+		/* sensor I/O rail */
+		pm8921_lvs4: lvs4 {
+			bias-pull-down;
+		};
+
+		/* camera cam_vio */
+		pm8921_lvs5: lvs5 {
+			bias-pull-down;
+		};
+
+		pm8921_lvs6: lvs6 {
+			bias-pull-down;
+		};
+
+		/* mipi_dsi.1-dsi1_vddio */
+		pm8921_lvs7: lvs7 {
+			bias-pull-down;
+		};
+
+		pm8921_ncp: ncp {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			qcom,switch-mode-frequency = <1600000>;
+		};
+	};
+};
+
+&pm8921_gpio {
+	gpio_keys_default: gpio-keys-default-state {
+		pins = "gpio1", "gpio2";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		input-enable;
+		bias-pull-down;
+		power-source = <PM8921_GPIO_S4>;
+	};
+
+	/* deassert the touch controller reset */
+	touch_reset_default: touch-reset-default-state {
+		pins = "gpio8";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		output-high;
+		drive-push-pull;
+		power-source = <PM8921_GPIO_S4>;
+	};
+};
+
+&tlmm_pinmux {
+	touch_irq_default: touch-irq-default-state {
+		pins = "gpio6";
+		function = "gpio";
+		drive-strength = <8>;
+		input-enable;
+		bias-pull-up;
+	};
+
+	accel_int_default: accel-int-default-state {
+		pins = "gpio22";
+		function = "gpio";
+		drive-strength = <2>;
+		input-enable;
+		bias-pull-down;
+	};
+
+	gyro_int_default: gyro-int-default-state {
+		pins = "gpio28";
+		function = "gpio";
+		drive-strength = <2>;
+		input-enable;
+		bias-pull-down;
+	};
+};

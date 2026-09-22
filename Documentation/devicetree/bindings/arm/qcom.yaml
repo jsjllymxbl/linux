@@ -41,6 +41,7 @@ properties:
               - lg,nexus4-mako
               - samsung,jflte
               - sony,xperia-yuga
+              - xiaomi,aries
               - qcom,apq8064-cm-qs600
               - qcom,apq8064-ifc6410
           - const: qcom,apq8064

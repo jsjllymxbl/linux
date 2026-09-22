@@ -481,11 +481,15 @@
 
 		};
 
-		gsbi2: gsbi@12480000 {
+		/*
+		 * GSBI2 is not at 0x12480000 (that block is GSBI12 on the
+		 * MSM8960), but at 0x13440000 on the APQ8064.
+		 */
+		gsbi2: gsbi@13440000 {
 			status = "disabled";
 			compatible = "qcom,gsbi-v1.0.0";
 			cell-index = <2>;
-			reg = <0x12480000 0x100>;
+			reg = <0x13440000 0x100>;
 			clocks = <&gcc GSBI2_H_CLK>;
 			clock-names = "iface";
 			#address-cells = <1>;
@@ -494,9 +498,9 @@
 
 			syscon-tcsr = <&tcsr>;
 
-			gsbi2_i2c: i2c@124a0000 {
+			gsbi2_i2c: i2c@13460000 {
 				compatible = "qcom,i2c-qup-v1.1.1";
-				reg = <0x124a0000 0x1000>;
+				reg = <0x13460000 0x1000>;
 				pinctrl-0 = <&i2c2_default_state>;
 				pinctrl-1 = <&i2c2_sleep_state>;
 				pinctrl-names = "default", "sleep";

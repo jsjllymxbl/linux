@@ -23,7 +23,6 @@
  *
  * Peripherals that have neither an upstream driver nor a binding yet are
  * documented here instead of being described as device tree nodes:
- *   - LM3530 backlight         : gsbi1_i2c @0x38, enable via PM8921 GPIO13
  *   - LM3554 camera flash      : gsbi1_i2c @0x53
  *   - ISA1200 haptics          : gsbi1_i2c @0x48
  *   - eS310 voice processor    : gsbi1_i2c @0x3e
@@ -148,7 +147,9 @@
 	status = "okay";
 };
 
-/* "I2C1_APPS": backlight, camera flash, haptics, MHL, voice processor */
+/*
+ * "I2C1_APPS": backlight, camera flash, haptics, MHL, voice processor
+ */
 &gsbi1 {
 	qcom,mode = <GSBI_PROT_I2C>;
 	status = "okay";
@@ -157,6 +158,24 @@
 &gsbi1_i2c {
 	clock-frequency = <400000>;
 	status = "okay";
+
+	/*
+	 * LM3530 white LED backlight driver (U1100).  The brightness
+	 * register is programmed over I2C, but the current sinks only
+	 * come up when the EN pin (PM8921 GPIO13, "BL_LED_EN") is high.
+	 * The full scale current of 22 mA follows the downstream board
+	 * file (GEN_CONFIG max_current code 5).
+	 */
+	backlight@38 {
+		compatible = "national,lm3530";
+		reg = <0x38>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&lm3530_backlight_default>;
+
+		enable-gpios = <&pm8921_gpio 13 GPIO_ACTIVE_HIGH>;
+		led-max-microamp = <22000>;
+	};
 };
 
 /* "I2C_SENS": on-sensor I2C bus, GPIO24 (SDA) / GPIO25 (SCL) */
@@ -753,6 +772,15 @@
 	/* deassert the touch controller reset */
 	touch_reset_default: touch-reset-default-state {
 		pins = "gpio8";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		output-high;
+		drive-push-pull;
+		power-source = <PM8921_GPIO_S4>;
+	};
+
+	/* BL_LED_EN: LM3530 backlight enable, driven by the lm3530 driver */
+	lm3530_backlight_default: lm3530-backlight-default-state {
+		pins = "gpio13";
 		function = PMIC_GPIO_FUNC_NORMAL;
 		output-high;
 		drive-push-pull;

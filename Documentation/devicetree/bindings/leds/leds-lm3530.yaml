@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/leds/leds-lm3530.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: National Semiconductor LM3530 White LED Backlight Driver
+
+maintainers:
+  - Shreshtha Kumar SAHU <shreshthakumar.sahu@stericsson.com>
+
+description: |
+  The LM3530 is an I2C controlled white LED backlight driver with an
+  optional hardware enable (EN) pin.  The brightness register is written
+  over I2C (manual mode); a fixed function LED named "lcd-backlight" is
+  registered in sysfs.
+
+properties:
+  compatible:
+    const: national,lm3530
+
+  reg:
+    description: I2C slave address of the controller.
+    maxItems: 1
+
+  enable-gpios:
+    description:
+      Optional GPIO connected to the EN pin.  The chip keeps the current
+      sinks off while EN is low, even when the brightness register is
+      programmed over I2C.
+    maxItems: 1
+
+  led-max-microamp:
+    description: |
+      Full scale LED current.  The LM3530 only supports the following
+      discrete values; the closest supported value that does not exceed
+      the requested current is programmed:
+      5000, 8000, 12000, 15000, 19000, 22000, 26000, 29000.
+
+  vin-supply: true
+
+required:
+  - compatible
+  - reg
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        backlight@38 {
+            compatible = "national,lm3530";
+            reg = <0x38>;
+
+            enable-gpios = <&gpio 13 GPIO_ACTIVE_HIGH>;
+            led-max-microamp = <22000>;
+        };
+    };

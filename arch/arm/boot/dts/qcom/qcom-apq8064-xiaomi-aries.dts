@@ -117,22 +117,84 @@
 
 	/*
 	 * The panel is a 720x1280 command mode DSI panel behind a Renesas
-	 * bridge; the Hitachi and Sharp variants differ only in their
-	 * initialization sequence and are told apart by the LCD ID strap
-	 * (PM8921 GPIO12, read as an input after the rails are up).
+	 * bridge (MCAP family page switch 0xB0); the variants are told apart
+	 * by a DCS read (0x04 + generic 0xBF), not by the LCD ID strap --
+	 * PM8921 GPIO12 is only logged as a reference.  This unit reads
+	 * GPIO12 = 1 (LCD_ID high).
 	 *
-	 * Upstream has no driver for it yet, so the MDP4/DSI pipeline is
-	 * intentionally left disabled.  A driver derived from the
-	 * downstream drivers/video/msm/mipi_renesas.c is required, and it
-	 * needs:
-	 *   - VSP supply : PM8921 GPIO11 (LCD_DCDC_EN / ext_5p4v)
-	 *   - vddio      : PM8921 L23, LVS7
-	 *   - vdda/avdd  : PM8921 L2, L11
+	 * Phase 3: the panel power sequencing is now described and driven by
+	 * drivers/gpu/drm/panel/panel-renesas-lgd-720p.c.  The panel node is
+	 * deliberately standalone (NOT under dsi0) and no endpoint is wired:
+	 * the MDP4/DSI pipeline stays disabled and no DCS command is sent.
+	 * In phase 4 the node moves under dsi0 and the panel driver becomes a
+	 * mipi_dsi_driver.  The DSI host rails stay untouched for now:
+	 *   - vdda (PM8921 L2) / vddio (PM8921 LVS7) are only used by dsi0
+	 *     once it is enabled in phase 4 (cmdline regulator_ignore_unused
+	 *     currently keeps them at the bootloader level).
+	 *
+	 * Panel wiring:
+	 *   - VSP supply : PM8921 GPIO11 -> 5.4 V boost (LCD_DCDC_EN)
+	 *   - vddio      : PM8921 L23
 	 *   - reset      : PM8921 GPIO25 (DISP_RESET_N, active low)
 	 *   - LCD ID     : PM8921 GPIO12 (input)
 	 *   - backlight  : LM3530 @0x38 on gsbi1_i2c, enable on PM8921 GPIO13
 	 *   - 4 DSI lanes, 24 bpp, hbp=14 hfp=220 hsw=12, vbp=7 vfp=7 vsw=1
 	 */
+
+	/*
+	 * PM8921 GPIO11 ("LCD_DCDC_EN") enables the on-board 5.4 V boost
+	 * converter (U1101) that generates the panel VSP/VSN rails.
+	 */
+	vreg_ext_5p4v: regulator-ext-5p4v {
+		compatible = "regulator-fixed";
+		regulator-name = "ext_5p4v";
+		regulator-min-microvolt = <5400000>;
+		regulator-max-microvolt = <5400000>;
+
+		gpio = <&pm8921_gpio 11 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	/*
+	 * Standalone panel node for phase 3 power-sequence bring-up.  The
+	 * display-timings block records the timing group that is effective
+	 * on this device (verified against the bootloader PHY snapshot,
+	 * phase 1 note §7.4); the driver also carries the same mode in C.
+	 */
+	panel {
+		compatible = "xiaomi,aries-720p-panel";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&panel_dcdc_en_default>,
+			    <&panel_lcd_id_default>,
+			    <&panel_reset_default>;
+
+		vddio-supply = <&pm8921_l23>;
+		vsp-supply = <&vreg_ext_5p4v>;
+
+		reset-gpios = <&pm8921_gpio 25 GPIO_ACTIVE_LOW>;
+		lcd-id-gpios = <&pm8921_gpio 12 GPIO_ACTIVE_HIGH>;
+
+		display-timings {
+			native-mode = <&panel_timing0>;
+
+			panel_timing0: timing0 {
+				clock-frequency = <75046000>;
+				hactive = <720>;
+				vactive = <1280>;
+				hback-porch = <14>;
+				hfront-porch = <220>;
+				hsync-len = <12>;
+				vback-porch = <7>;
+				vfront-porch = <7>;
+				vsync-len = <1>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+		};
+	};
 };
 
 /* Debug UART, GPIO82 (TX) / GPIO83 (RX), "DEBUG_UART" on the schematic */
@@ -783,6 +845,40 @@
 		pins = "gpio13";
 		function = PMIC_GPIO_FUNC_NORMAL;
 		output-high;
+		drive-push-pull;
+		power-source = <PM8921_GPIO_S4>;
+	};
+
+	/*
+	 * Panel pins, downstream mitwo table (board-aries-pmic.c):
+	 *   GPIO11 "LCD_DCDC_EN"  : output high (5.4 V boost enable; also
+	 *                           driven as the ext_5p4v regulator gpio)
+	 *   GPIO12 "LCD_ID_DET"   : input, no pull
+	 *   GPIO25 "DISP_RESET_N" : output low (reset asserted, active low;
+	 *                           downstream boots with it deasserted, but
+	 *                           the panel driver asserts reset at probe
+	 *                           anyway, so start low)
+	 */
+	panel_dcdc_en_default: panel-dcdc-en-default-state {
+		pins = "gpio11";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		output-high;
+		drive-push-pull;
+		power-source = <PM8921_GPIO_S4>;
+	};
+
+	panel_lcd_id_default: panel-lcd-id-default-state {
+		pins = "gpio12";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		input-enable;
+		bias-disable;
+		power-source = <PM8921_GPIO_S4>;
+	};
+
+	panel_reset_default: panel-reset-default-state {
+		pins = "gpio25";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		output-low;
 		drive-push-pull;
 		power-source = <PM8921_GPIO_S4>;
 	};

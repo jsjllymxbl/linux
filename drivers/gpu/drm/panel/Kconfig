@@ -812,6 +812,17 @@ config DRM_PANEL_RENESAS_R69328
 	  This panel controller can be found in LG Optimus 4X P895 smartphone
 	  in combination with LCD panel.
 
+config DRM_PANEL_XIAOMI_ARIES_720P
+	tristate "Xiaomi Mi 2 (aries) 720x1280 DSI panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	help
+	  Say Y here if you want to enable support for the 4.3" 720x1280
+	  panel with a Renesas MCAP-family controller used in the Xiaomi Mi 2
+	  (aries). The controller is switched from command to video mode
+	  because the APQ8064 MDP4 DRM driver only implements DSI video
+	  output.
+
 config DRM_PANEL_RONBO_RB070D30
 	tristate "Ronbo Electronics RB070D30 panel"
 	depends on OF

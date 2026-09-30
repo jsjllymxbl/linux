@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/display/panel/xiaomi,aries-720p-panel.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Xiaomi Mi 2 (aries) 4.3" 720x1280 MIPI-DSI panel
+
+maintainers:
+  - jsjllymxbl <jsjllymxbl@gmail.com>
+
+description: |
+  The Xiaomi Mi 2 (Qualcomm APQ8064, codename "aries") ships with a
+  4.3" 720x1280 4-lane MIPI-DSI video mode panel driven by a Renesas
+  MCAP-family display controller.  The same controller is paired with
+  Hitachi, LGD or Sharp modules depending on the unit; the variants
+  share the interface and are told apart at runtime by the LCD_ID
+  strap (lcd-id-gpios).
+
+allOf:
+  - $ref: panel-common.yaml#
+
+properties:
+  compatible:
+    const: xiaomi,aries-720p-panel
+
+  reg:
+    description: DSI virtual channel number, usually 0
+    maxItems: 1
+
+  vddio-supply:
+    description: 1.8V I/O supply
+
+  vsp-supply:
+    description: 5.4V analog supply for the source driver
+
+  reset-gpios:
+    description: Display reset, active low
+    maxItems: 1
+
+  lcd-id-gpios:
+    description: LCD variant selection strap, input
+    maxItems: 1
+
+required:
+  - compatible
+  - reg
+  - vddio-supply
+  - vsp-supply
+  - reset-gpios
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    dsi {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        panel@0 {
+            compatible = "xiaomi,aries-720p-panel";
+            reg = <0>;
+
+            vddio-supply = <&pm8921_l23>;
+            vsp-supply = <&vreg_ext_5p4v>;
+
+            reset-gpios = <&pm8921_gpio 25 GPIO_ACTIVE_LOW>;
+            lcd-id-gpios = <&pm8921_gpio 12 GPIO_ACTIVE_HIGH>;
+
+            port {
+                panel_in: endpoint {
+                    remote-endpoint = <&dsi0_out>;
+                };
+            };
+        };
+    };

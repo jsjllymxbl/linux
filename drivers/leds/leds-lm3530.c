@@ -18,6 +18,8 @@
 #include <linux/types.h>
 #include <linux/regulator/consumer.h>
 #include <linux/module.h>
+#include <linux/gpio/consumer.h>
+#include <linux/of.h>
 
 #define LM3530_LED_DEV "lcd-backlight"
 #define LM3530_NAME "lm3530-led"
@@ -81,6 +83,14 @@
 /* 7 bits are used for the brightness : LM3530_BRT_CTRL_REG */
 #define MAX_BRIGHTNESS			(127)
 
+/*
+ * Full scale LED current options, as programmed into GEN_CONFIG[4:2]
+ * (see LM3530_FS_CURR_* in <linux/led-lm3530.h>).
+ */
+static const u32 lm3530_fs_currents[] = {
+	5000, 8000, 12000, 15000, 19000, 22000, 26000, 29000,
+};
+
 struct lm3530_mode_map {
 	const char *mode;
 	enum lm3530_mode mode_val;
@@ -99,6 +109,7 @@ static struct lm3530_mode_map mode_map[] = {
  * @pdata: LM3530 platform data
  * @mode: mode of operation - manual, ALS, PWM
  * @regulator: regulator
+ * @enable_gpio: optional hardware enable (EN) pin
  * @brightness: previous brightness value
  * @enable: regulator is enabled
  */
@@ -108,6 +119,7 @@ struct lm3530_data {
 	struct lm3530_platform_data *pdata;
 	enum lm3530_mode mode;
 	struct regulator *regulator;
+	struct gpio_desc *enable_gpio;
 	enum led_brightness brightness;
 	bool enable;
 };
@@ -199,6 +211,8 @@ static int lm3530_led_enable(struct lm3530_data *drvdata)
 		return ret;
 	}
 
+	gpiod_set_value_cansleep(drvdata->enable_gpio, 1);
+
 	drvdata->enable = true;
 	return 0;
 }
@@ -209,6 +223,8 @@ static void lm3530_led_disable(struct lm3530_data *drvdata)
 
 	if (!drvdata->enable)
 		return;
+
+	gpiod_set_value_cansleep(drvdata->enable_gpio, 0);
 
 	ret = regulator_disable(drvdata->regulator);
 	if (ret) {
@@ -405,9 +421,40 @@ static struct attribute *lm3530_attrs[] = {
 };
 ATTRIBUTE_GROUPS(lm3530);
 
+static struct lm3530_platform_data *lm3530_get_pdata(struct i2c_client *client)
+{
+	struct device *dev = &client->dev;
+	struct lm3530_platform_data *pdata;
+	unsigned int val;
+	int i;
+
+	if (dev_get_platdata(dev) || !dev->of_node)
+		return dev_get_platdata(dev);
+
+	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
+	if (!pdata)
+		return ERR_PTR(-ENOMEM);
+
+	/* Only manual (I2C brightness register) mode is supported from DT. */
+	pdata->mode = LM3530_BL_MODE_MANUAL;
+
+	/*
+	 * Round the requested full scale current down to the nearest
+	 * discrete level supported by the hardware.
+	 */
+	if (!of_property_read_u32(dev->of_node, "led-max-microamp", &val)) {
+		for (i = ARRAY_SIZE(lm3530_fs_currents) - 1; i > 0; i--)
+			if (lm3530_fs_currents[i] <= val)
+				break;
+		pdata->max_current = i;
+	}
+
+	return pdata;
+}
+
 static int lm3530_probe(struct i2c_client *client)
 {
-	struct lm3530_platform_data *pdata = dev_get_platdata(&client->dev);
+	struct lm3530_platform_data *pdata = lm3530_get_pdata(client);
 	struct lm3530_data *drvdata;
 	int err = 0;
 
@@ -415,6 +462,9 @@ static int lm3530_probe(struct i2c_client *client)
 		dev_err(&client->dev, "platform data required\n");
 		return -ENODEV;
 	}
+
+	if (IS_ERR(pdata))
+		return PTR_ERR(pdata);
 
 	/* BL mode */
 	if (pdata->mode > LM3530_BL_MODE_PWM) {
@@ -440,6 +490,7 @@ static int lm3530_probe(struct i2c_client *client)
 	drvdata->led_dev.name = LM3530_LED_DEV;
 	drvdata->led_dev.brightness_set = lm3530_brightness_set;
 	drvdata->led_dev.max_brightness = MAX_BRIGHTNESS;
+	drvdata->led_dev.flags = LED_CORE_SUSPENDRESUME;
 	drvdata->led_dev.groups = lm3530_groups;
 
 	i2c_set_clientdata(client, drvdata);
@@ -451,6 +502,11 @@ static int lm3530_probe(struct i2c_client *client)
 		drvdata->regulator = NULL;
 		return err;
 	}
+
+	drvdata->enable_gpio = devm_gpiod_get_optional(&client->dev, "enable",
+						       GPIOD_OUT_LOW);
+	if (IS_ERR(drvdata->enable_gpio))
+		return PTR_ERR(drvdata->enable_gpio);
 
 	if (drvdata->pdata->brt_val) {
 		err = lm3530_init_registers(drvdata);
@@ -483,12 +539,19 @@ static const struct i2c_device_id lm3530_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, lm3530_id);
 
+static const struct of_device_id lm3530_of_match[] = {
+	{ .compatible = "national,lm3530" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, lm3530_of_match);
+
 static struct i2c_driver lm3530_i2c_driver = {
 	.probe = lm3530_probe,
 	.remove = lm3530_remove,
 	.id_table = lm3530_id,
 	.driver = {
 		.name = LM3530_NAME,
+		.of_match_table = lm3530_of_match,
 	},
 };
 

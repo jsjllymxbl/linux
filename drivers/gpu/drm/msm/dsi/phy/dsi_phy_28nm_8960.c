@@ -6,6 +6,7 @@
 #include <dt-bindings/clock/qcom,dsi-phy-28nm.h>
 #include <linux/clk-provider.h>
 #include <linux/delay.h>
+#include <linux/of.h>
 
 #include "dsi_phy.h"
 #include "dsi.xml.h"
@@ -465,6 +466,55 @@ static int dsi_pll_28nm_8960_init(struct msm_dsi_phy *phy)
 	return 0;
 }
 
+/*
+ * The stock 8960 downstream driver programs the D-PHY timing registers and
+ * the DSI_CLKOUT_TIMING_CTRL (T_CLK_PRE/T_CLK_POST) from per-panel
+ * hard-coded tables instead of computing them, and the values it uses are
+ * considerably more conservative (longer) than what msm_dsi_dphy_timing_calc()
+ * comes up with.  Some panels (e.g. the Renesas MCAP panel of the Xiaomi
+ * Mi 2) show horizontal smearing and frame jitter with the computed
+ * values.  Allow the board DT to override the calculated timings with the
+ * stock values:
+ *
+ *  qcom,dsi-phy-dphy-timing: 8 cells in bit clock (UI) units,
+ *      <clk_zero clk_trail clk_prepare hs_exit hs_zero hs_prepare
+ *       hs_trail hs_rqst>
+ *  qcom,dsi-phy-clk-pre:  T_CLK_PRE, in byte clock cycles
+ *  qcom,dsi-phy-clk-post: T_CLK_POST, in byte clock cycles
+ */
+static void dsi_28nm_phy_timing_override(struct msm_dsi_phy *phy,
+					 struct msm_dsi_dphy_timing *timing)
+{
+	struct device *dev = &phy->pdev->dev;
+	u32 vals[8];
+	u32 val;
+	int ret;
+
+	ret = of_property_read_u32_array(dev->of_node,
+					 "qcom,dsi-phy-dphy-timing",
+					 vals, ARRAY_SIZE(vals));
+	if (!ret) {
+		timing->clk_zero = min_t(u32, vals[0], 0xff);
+		timing->clk_trail = min_t(u32, vals[1], 0xff);
+		timing->clk_prepare = min_t(u32, vals[2], 0xff);
+		timing->hs_exit = min_t(u32, vals[3], 0xff);
+		timing->hs_zero = min_t(u32, vals[4], 0xff);
+		timing->hs_prepare = min_t(u32, vals[5], 0xff);
+		timing->hs_trail = min_t(u32, vals[6], 0xff);
+		timing->hs_rqst = min_t(u32, vals[7], 0xff);
+
+		DBG("overriding DPHY timings from DT");
+	}
+
+	if (!of_property_read_u32(dev->of_node, "qcom,dsi-phy-clk-pre", &val)) {
+		timing->shared_timings.clk_pre = min_t(u32, val, 63);
+		timing->shared_timings.clk_pre_inc_by_2 = false;
+	}
+
+	if (!of_property_read_u32(dev->of_node, "qcom,dsi-phy-clk-post", &val))
+		timing->shared_timings.clk_post = min_t(u32, val, 63);
+}
+
 static void dsi_28nm_dphy_set_timing(struct msm_dsi_phy *phy,
 		struct msm_dsi_dphy_timing *timing)
 {
@@ -583,6 +633,8 @@ static int dsi_28nm_phy_enable(struct msm_dsi_phy *phy,
 			      __func__);
 		return -EINVAL;
 	}
+
+	dsi_28nm_phy_timing_override(phy, timing);
 
 	dsi_28nm_phy_regulator_init(phy);
 

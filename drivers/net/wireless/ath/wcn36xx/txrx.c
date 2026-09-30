@@ -367,13 +367,35 @@ int wcn36xx_rx_skb(struct wcn36xx *wcn, struct sk_buff *skb)
 		 */
 		u8 hwch = (bd->reserved0 << 4) + bd->rx_ch;
 
-		if (bd->rf_band != 1 && hwch <= sizeof(ab_rx_ch_map) && hwch >= 1) {
+		/* On the WCN3660 of the Xiaomi Mi 2 (aries), which runs the
+		 * WCNSS 1.4 firmware from MIUI, rf_band is 0 for 2.4GHz and 1
+		 * for 5GHz - the opposite of what commit 8a27ca394782
+		 * ("wcn36xx: Correct band/freq reporting on RX") assumed.
+		 *
+		 * With the old "rf_band != 1" test every 2.4GHz frame took the
+		 * 5GHz branch, so rx_ch was used as an index into ab_rx_ch_map:
+		 * channel 13 became 116 and was reported as 5580 MHz.  Every
+		 * scan result was labelled 5GHz and authentication was sent on
+		 * a channel where the AP does not listen, so association always
+		 * timed out.
+		 *
+		 * rf_band/rx_ch can be observed again with
+		 *   echo 0x10 >/sys/module/wcn36xx/parameters/debug_mask
+		 */
+		wcn36xx_dbg(WCN36XX_DBG_RX,
+			    "scan_learn rf_band=%u r0=%u rx_ch=%u hwch=%u\n",
+			    bd->rf_band, bd->reserved0, bd->rx_ch, hwch);
+
+		if (bd->rf_band == 1 && hwch >= 1 && hwch <= sizeof(ab_rx_ch_map)) {
 			status.band = NL80211_BAND_5GHZ;
 			status.freq = ieee80211_channel_to_frequency(ab_rx_ch_map[hwch - 1],
 								     status.band);
-		} else {
+		} else if (hwch >= 1 && hwch <= 14) {
 			status.band = NL80211_BAND_2GHZ;
 			status.freq = ieee80211_channel_to_frequency(hwch, status.band);
+		} else {
+			status.band = WCN36XX_BAND(wcn);
+			status.freq = WCN36XX_CENTER_FREQ(wcn);
 		}
 	} else {
 		status.band = WCN36XX_BAND(wcn);

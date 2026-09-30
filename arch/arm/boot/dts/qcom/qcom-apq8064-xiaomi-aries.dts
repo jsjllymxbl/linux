@@ -116,21 +116,17 @@
 	};
 
 	/*
-	 * The panel is a 720x1280 command mode DSI panel behind a Renesas
-	 * bridge (MCAP family page switch 0xB0); the variants are told apart
-	 * by a DCS read (0x04 + generic 0xBF), not by the LCD ID strap --
+	 * The panel is a 720x1280 DSI panel behind a Renesas bridge (MCAP
+	 * family, page switch 0xB0); the variants are told apart by a DCS
+	 * read (0x04) plus a generic read (0xBF), not by the LCD ID strap --
 	 * PM8921 GPIO12 is only logged as a reference.  This unit reads
 	 * GPIO12 = 1 (LCD_ID high).
 	 *
-	 * Phase 3: the panel power sequencing is now described and driven by
-	 * drivers/gpu/drm/panel/panel-renesas-lgd-720p.c.  The panel node is
-	 * deliberately standalone (NOT under dsi0) and no endpoint is wired:
-	 * the MDP4/DSI pipeline stays disabled and no DCS command is sent.
-	 * In phase 4 the node moves under dsi0 and the panel driver becomes a
-	 * mipi_dsi_driver.  The DSI host rails stay untouched for now:
-	 *   - vdda (PM8921 L2) / vddio (PM8921 LVS7) are only used by dsi0
-	 *     once it is enabled in phase 4 (cmdline regulator_ignore_unused
-	 *     currently keeps them at the bootloader level).
+	 * Downstream drives this panel in DSI command mode, but MDP4 only
+	 * implements DSI video mode (mdp4 always selects INTF_DSI_VIDEO),
+	 * so the Renesas IC is switched to video mode at the end of the
+	 * init sequence (MCAP 0xB3 0x40), the same command the downstream
+	 * mipi_renesas.c video path sends.
 	 *
 	 * Panel wiring:
 	 *   - VSP supply : PM8921 GPIO11 -> 5.4 V boost (LCD_DCDC_EN)
@@ -138,7 +134,18 @@
 	 *   - reset      : PM8921 GPIO25 (DISP_RESET_N, active low)
 	 *   - LCD ID     : PM8921 GPIO12 (input)
 	 *   - backlight  : LM3530 @0x38 on gsbi1_i2c, enable on PM8921 GPIO13
-	 *   - 4 DSI lanes, 24 bpp, hbp=14 hfp=220 hsw=12, vbp=7 vfp=7 vsw=1
+	 *   - DSI host   : vdda = PM8921 L2 (1.2 V), avdd = PM8921 L11
+	 *     (3.0 V), vddio = PM8921 LVS7 (1.8 V), PHY vddio = LVS7
+	 *   - 4 DSI lanes, 24 bpp RGB888, 60 Hz
+	 *
+	 * APQ8064_MTP video profile (also carried by the panel driver), the
+	 * porches the Hitachi panel variant's NVM/GIP configuration is tuned for
+	 * (same values as the downstream Hitachi 720p and Sharp video panel
+	 * data, note the large blanking sits in FRONT of the active area):
+	 *   720x1280, hbp=14 hfp=220 hsw=12, vbp=7 vfp=7 vsw=1
+	 *   -> 75.05 MHz pixel clock -> 450 Mbps/lane, burst traffic with
+	 *   TX EoT and a continuous clock lane; verified against the
+	 *   bootloader's DSI link state.
 	 */
 
 	/*
@@ -151,22 +158,42 @@
 		regulator-min-microvolt = <5400000>;
 		regulator-max-microvolt = <5400000>;
 
+		pinctrl-names = "default";
+		pinctrl-0 = <&panel_dcdc_en_default>;
+
 		gpio = <&pm8921_gpio 11 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 	};
+};
 
+/* MDP4 -> DSI1 -> panel display pipeline */
+&mdp {
+	status = "okay";
+};
+
+&mdp_dsi1_out {
+	remote-endpoint = <&dsi0_in>;
+};
+
+&dsi0 {
 	/*
-	 * Standalone panel node for phase 3 power-sequence bring-up.  The
-	 * display-timings block records the timing group that is effective
-	 * on this device (verified against the bootloader PHY snapshot,
-	 * phase 1 note §7.4); the driver also carries the same mode in C.
+	 * Downstream mipi_dsi_mipanel_power() only enables L2 (dsi1_pll_vdda)
+	 * and LVS7 (dsi1_vddio) for this board; L11 (dsi1_avdd) is what the
+	 * 8064 board files feed the DSI analog rail with, and the msm DSI
+	 * host binding wants an avdd supply, so it is wired here too.
 	 */
-	panel {
+	vdda-supply = <&pm8921_l2>;
+	avdd-supply = <&pm8921_l11>;
+	vddio-supply = <&pm8921_lvs7>;
+
+	status = "okay";
+
+	panel@0 {
 		compatible = "xiaomi,aries-720p-panel";
+		reg = <0>;
 
 		pinctrl-names = "default";
-		pinctrl-0 = <&panel_dcdc_en_default>,
-			    <&panel_lcd_id_default>,
+		pinctrl-0 = <&panel_lcd_id_default>,
 			    <&panel_reset_default>;
 
 		vddio-supply = <&pm8921_l23>;
@@ -175,26 +202,42 @@
 		reset-gpios = <&pm8921_gpio 25 GPIO_ACTIVE_LOW>;
 		lcd-id-gpios = <&pm8921_gpio 12 GPIO_ACTIVE_HIGH>;
 
-		display-timings {
-			native-mode = <&panel_timing0>;
-
-			panel_timing0: timing0 {
-				clock-frequency = <75046000>;
-				hactive = <720>;
-				vactive = <1280>;
-				hback-porch = <14>;
-				hfront-porch = <220>;
-				hsync-len = <12>;
-				vback-porch = <7>;
-				vfront-porch = <7>;
-				vsync-len = <1>;
-				hsync-active = <0>;
-				vsync-active = <0>;
-				de-active = <0>;
-				pixelclk-active = <0>;
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&dsi0_out>;
 			};
 		};
 	};
+};
+
+&dsi0_in {
+	remote-endpoint = <&mdp_dsi1_out>;
+};
+
+&dsi0_out {
+	remote-endpoint = <&panel_in>;
+	data-lanes = <0 1 2 3>;
+};
+
+&dsi0_phy {
+	/*
+	 * D-PHY timing override with the stock downstream values for the
+	 * 450 Mbps profile (dsi_phy_db->timing of
+	 * mipi_hitachi_cmd_720p_pt.c: 0xB3, 0x8C, 0x1D, 0x00, 0x20, 0x94,
+	 * 0x20, 0x8E, 0x20), plus the downstream T_CLK_PRE/T_CLK_POST of
+	 * DSI_CLKOUT_TIMING_CTRL (59/34).  The mainline computed values are
+	 * much tighter (e.g. T_CLK_POST comes out at 4 byte clocks, below
+	 * the MIPI minimum) and result in a smeared, jittering picture.
+	 *
+	 * For the LGD video profile (346 Mbps) the downstream table is
+	 * <102 38 28 31 148 30 142 31> with T_CLK_PRE=53.
+	 */
+	qcom,dsi-phy-dphy-timing = <179 140 29 32 148 32 142 32>;
+	qcom,dsi-phy-clk-pre = <59>;
+	qcom,dsi-phy-clk-post = <34>;
+
+	vddio-supply = <&pm8921_lvs7>;
+	status = "okay";
 };
 
 /* Debug UART, GPIO82 (TX) / GPIO83 (RX), "DEBUG_UART" on the schematic */
@@ -840,19 +883,18 @@
 		power-source = <PM8921_GPIO_S4>;
 	};
 
-	/* BL_LED_EN: LM3530 backlight enable, driven by the lm3530 driver */
+	/* BL_LED_EN: electrical setup; the LM3530 driver controls its level */
 	lm3530_backlight_default: lm3530-backlight-default-state {
 		pins = "gpio13";
 		function = PMIC_GPIO_FUNC_NORMAL;
-		output-high;
 		drive-push-pull;
 		power-source = <PM8921_GPIO_S4>;
 	};
 
 	/*
 	 * Panel pins, downstream mitwo table (board-aries-pmic.c):
-	 *   GPIO11 "LCD_DCDC_EN"  : output high (5.4 V boost enable; also
-	 *                           driven as the ext_5p4v regulator gpio)
+	 *   GPIO11 "LCD_DCDC_EN"  : 5.4 V boost enable, controlled by the
+	 *                           ext_5p4v fixed regulator
 	 *   GPIO12 "LCD_ID_DET"   : input, no pull
 	 *   GPIO25 "DISP_RESET_N" : output low (reset asserted, active low;
 	 *                           downstream boots with it deasserted, but
@@ -862,7 +904,6 @@
 	panel_dcdc_en_default: panel-dcdc-en-default-state {
 		pins = "gpio11";
 		function = PMIC_GPIO_FUNC_NORMAL;
-		output-high;
 		drive-push-pull;
 		power-source = <PM8921_GPIO_S4>;
 	};

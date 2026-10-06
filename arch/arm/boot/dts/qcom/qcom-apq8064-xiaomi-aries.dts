@@ -57,14 +57,21 @@
 	};
 
 	/*
-	 * PM8921 GPIO5 switches the FET that powers the Synaptics S3202
-	 * touch controller (downstream "touchscreen power pin").
+	 * PM8921 GPIO5 ("TP_PWR_EN") gates the U1102 regulator that
+	 * produces TP_VDD_2V8, the AVDD rail of the touch module.
+	 * The level is driven through the vreg_touch fixed regulator,
+	 * but ssbi-gpio keeps a pin in tristate until it has been
+	 * configured through pinctrl, so the pinmux state below is
+	 * required for the regulator to have any effect.
 	 */
 	vreg_touch: regulator-touch {
 		compatible = "regulator-fixed";
 		regulator-name = "touch_vdd";
-		regulator-min-microvolt = <2850000>;
-		regulator-max-microvolt = <2850000>;
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_power_default>;
 
 		gpio = <&pm8921_gpio 5 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
@@ -85,6 +92,9 @@
 		vin-supply = <&pm8921_l9>;
 		gpio = <&pm8921_gpio 23 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&sensor_avdd_default>;
 
 		startup-delay-us = <10000>;
 	};
@@ -380,8 +390,9 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&touch_irq_default>, <&touch_reset_default>;
 
+		/* AVDD is fed through the PM8921 GPIO5 switch; VDDIO is S4 */
 		vdd-supply = <&vreg_touch>;
-		vio-supply = <&vreg_touch>;
+		vio-supply = <&pm8921_s4>;
 		syna,startup-delay-ms = <100>;
 
 		#address-cells = <1>;
@@ -415,8 +426,9 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&touch_irq_default>, <&touch_reset_default>;
 
+		/* AVDD is fed through the PM8921 GPIO5 switch; VDDIO is S4 */
 		vdd-supply = <&vreg_touch>;
-		vio-supply = <&vreg_touch>;
+		vio-supply = <&pm8921_s4>;
 		syna,startup-delay-ms = <100>;
 
 		#address-cells = <1>;
@@ -449,8 +461,9 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&touch_irq_default>, <&touch_reset_default>;
 
+		/* AVDD is fed through the PM8921 GPIO5 switch; VDDIO is S4 */
 		vdd-supply = <&vreg_touch>;
-		vio-supply = <&vreg_touch>;
+		vio-supply = <&pm8921_s4>;
 		syna,startup-delay-ms = <100>;
 
 		#address-cells = <1>;
@@ -485,9 +498,9 @@
 
 		reset-gpios = <&pm8921_gpio 8 GPIO_ACTIVE_LOW>;
 
-		/* the module is fed through the PM8921 GPIO5 switch */
-		vdd-supply = <&vreg_touch>;
+		/* AVDD is fed through the PM8921 GPIO5 switch; VDDIO is S4 */
 		vdda-supply = <&vreg_touch>;
+		vdd-supply = <&pm8921_s4>;
 
 		/* Capacitive keys: menu, home, back */
 		linux,keycodes = <KEY_MENU KEY_HOME KEY_BACK>;
@@ -505,8 +518,8 @@
 
 		reset-gpios = <&pm8921_gpio 8 GPIO_ACTIVE_LOW>;
 
-		vdd-supply = <&vreg_touch>;
 		vdda-supply = <&vreg_touch>;
+		vdd-supply = <&pm8921_s4>;
 
 		linux,keycodes = <KEY_MENU KEY_HOME KEY_BACK>;
 	};
@@ -523,8 +536,8 @@
 
 		reset-gpios = <&pm8921_gpio 8 GPIO_ACTIVE_LOW>;
 
-		vdd-supply = <&vreg_touch>;
 		vdda-supply = <&vreg_touch>;
+		vdd-supply = <&pm8921_s4>;
 
 		linux,keycodes = <KEY_MENU KEY_HOME KEY_BACK>;
 	};
@@ -880,6 +893,7 @@
 		function = PMIC_GPIO_FUNC_NORMAL;
 		output-high;
 		drive-push-pull;
+		bias-disable;
 		power-source = <PM8921_GPIO_S4>;
 	};
 
@@ -888,6 +902,24 @@
 		pins = "gpio13";
 		function = PMIC_GPIO_FUNC_NORMAL;
 		drive-push-pull;
+		power-source = <PM8921_GPIO_S4>;
+	};
+
+	/* TP_PWR_EN: touch AVDD switch gate, driven by vreg_touch */
+	touch_power_default: touch-power-default-state {
+		pins = "gpio5";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		drive-push-pull;
+		bias-disable;
+		power-source = <PM8921_GPIO_S4>;
+	};
+
+	/* SENSOR_AVDD_EN: sensor AVDD switch gate, driven by vreg_sensor_avdd */
+	sensor_avdd_default: sensor-avdd-default-state {
+		pins = "gpio23";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		drive-push-pull;
+		bias-disable;
 		power-source = <PM8921_GPIO_S4>;
 	};
 

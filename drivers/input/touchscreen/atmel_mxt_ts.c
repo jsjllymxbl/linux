@@ -1288,8 +1288,10 @@ static int mxt_soft_reset(struct mxt_data *data)
 	reinit_completion(&data->reset_completion);
 
 	ret = mxt_t6_command(data, MXT_COMMAND_RESET, MXT_RESET_VALUE, false);
-	if (ret)
+	if (ret) {
+		enable_irq(data->irq);
 		return ret;
+	}
 
 	/* Ignore CHG line for 100ms after reset */
 	msleep(MXT_RESET_INVALID_CHG);

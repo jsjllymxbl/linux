@@ -268,6 +268,15 @@ static int a3xx_hw_init(struct msm_gpu *gpu)
 	/* Turn on performance counters: */
 	gpu_write(gpu, REG_A3XX_RBBM_PERFCTR_CTL, 0x01);
 
+	/*
+	 * Select RBBM counter #1 for RBBM_STATUS_MASKED, the same "count
+	 * cycles with the GPU busy status asserted" countable a5xx picks for
+	 * RBBM0 (see a5xx_hw_init()).  Left at its default RBBM_ALAWYS_ON
+	 * countable the counter ticks even with nothing to do, a3xx_gpu_busy()
+	 * then reports 100% load and devfreq stays pinned to the top OPP.
+	 */
+	gpu_write(gpu, REG_A3XX_RBBM_PERFCOUNTER1_SELECT, RBBM_RBBM_STATUS_MASKED);
+
 	gpu_write(gpu, REG_A3XX_RBBM_INT_0_MASK, A3XX_INT0_MASK);
 
 	ret = adreno_hw_init(gpu);

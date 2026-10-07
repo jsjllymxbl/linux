@@ -581,6 +581,45 @@
 	};
 };
 
+/*
+ * GPU operating points.
+ *
+ * The SoC level table only carries the two extremes (27 MHz and 450 MHz),
+ * so devfreq cannot do anything in between and the GPU is pinned to the
+ * top level all the time.  Fill in the five level ladder that the
+ * downstream board file for this machine describes
+ * (arch/arm/mach-msm/board-aries-gpu.c, kgsl_3d0_pdata.pwrlevel):
+ *
+ *   pwrlevel  0       1       2       3       4
+ *   gpu       400 MHz 320 MHz 200 MHz 128 MHz  27 MHz
+ *   bus idx   4       3       2       1        0
+ *
+ * The 450 MHz entry of the SoC table is dropped again: board-aries-gpu.c
+ * only raises the top level from 400 MHz to 450 MHz (PLL15) for
+ * cpu_is_apq8064ab(), and this unit is plain APQ8064.  Every frequency
+ * below is one the MMCC gfx3d_src dyn-rcg generates exactly
+ * (clk_tbl_gfx3d_8064: PLL2/2, PLL2 2/5, PLL2/4, PLL8/3, PXO).
+ */
+&gpu_opp_table {
+	/delete-node/ opp-450000000;
+
+	opp-400000000 {
+		opp-hz = /bits/ 64 <400000000>;
+	};
+
+	opp-320000000 {
+		opp-hz = /bits/ 64 <320000000>;
+	};
+
+	opp-200000000 {
+		opp-hz = /bits/ 64 <200000000>;
+	};
+
+	opp-128000000 {
+		opp-hz = /bits/ 64 <128000000>;
+	};
+};
+
 &gpu {
 	status = "okay";
 };

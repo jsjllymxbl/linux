@@ -41,6 +41,10 @@
 			enable-method = "qcom,kpss-acc-v1";
 			device_type = "cpu";
 			reg = <0>;
+			#cooling-cells = <2>;
+			operating-points-v2 = <&cpu_opp_table>;
+			clocks = <&kraitcc 0>;
+			cpu-supply = <&saw0_vreg>;
 			next-level-cache = <&l2>;
 			qcom,acc = <&acc0>;
 			qcom,saw = <&saw0>;
@@ -52,6 +56,10 @@
 			enable-method = "qcom,kpss-acc-v1";
 			device_type = "cpu";
 			reg = <1>;
+			#cooling-cells = <2>;
+			operating-points-v2 = <&cpu_opp_table>;
+			clocks = <&kraitcc 1>;
+			cpu-supply = <&saw1_vreg>;
 			next-level-cache = <&l2>;
 			qcom,acc = <&acc1>;
 			qcom,saw = <&saw1>;
@@ -63,6 +71,10 @@
 			enable-method = "qcom,kpss-acc-v1";
 			device_type = "cpu";
 			reg = <2>;
+			#cooling-cells = <2>;
+			operating-points-v2 = <&cpu_opp_table>;
+			clocks = <&kraitcc 2>;
+			cpu-supply = <&saw2_vreg>;
 			next-level-cache = <&l2>;
 			qcom,acc = <&acc2>;
 			qcom,saw = <&saw2>;
@@ -74,6 +86,10 @@
 			enable-method = "qcom,kpss-acc-v1";
 			device_type = "cpu";
 			reg = <3>;
+			#cooling-cells = <2>;
+			operating-points-v2 = <&cpu_opp_table>;
+			clocks = <&kraitcc 3>;
+			cpu-supply = <&saw3_vreg>;
 			next-level-cache = <&l2>;
 			qcom,acc = <&acc3>;
 			qcom,saw = <&saw3>;
@@ -95,6 +111,214 @@
 				min-residency-us = <3000>;
 			};
 		};
+	};
+
+	/*
+	 * CPU frequency / voltage ladder from the downstream APQ8064
+	 * acpuclock tables (arch/arm/mach-msm/acpuclock-8064.c).
+	 *
+	 * The silicon speed bin and PVS (process voltage scaling) class are
+	 * read from the PTE efuse at 0x7000c0; the cpufreq-nvmem driver
+	 * names the resulting corner "speed<n>-pvs<m>-v<pvs_ver>".  For each
+	 * operating point:
+	 *   - "opp-microvolt-speed1-pvs4-v0" carries the exact fused table of
+	 *     speed bin 1 / PVS 4 silicon (tbl_PVS4_1700MHz), which is what
+	 *     this Mi 2 (aries) unit reports in its PTE efuse (0x0070_00c0 =
+	 *     0x00031001, read over nvmem on the running system);
+	 *   - the plain "opp-microvolt" fallback carries the slowest silicon
+	 *     table (tbl_slow, speed bin 0 / PVS 0), which is safe (highest)
+	 *     for every other bin combination.  Frequencies that only exist
+	 *     in the bin 1 tables fall back to the 1250 mV ceiling.
+	 */
+	cpu_opp_table: opp-table-cpu {
+		compatible = "operating-points-v2-krait-cpu";
+		nvmem-cells = <&pvs_efuse>;
+
+		opp-384000000 {
+			opp-hz = /bits/ 64 <384000000>;
+			opp-microvolt = <950000>;
+			opp-microvolt-speed1-pvs4-v0 = <875000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-432000000 {
+			opp-hz = /bits/ 64 <432000000>;
+			opp-microvolt = <975000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-486000000 {
+			opp-hz = /bits/ 64 <486000000>;
+			opp-microvolt = <975000>;
+			opp-microvolt-speed1-pvs4-v0 = <875000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-540000000 {
+			opp-hz = /bits/ 64 <540000000>;
+			opp-microvolt = <1000000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-594000000 {
+			opp-hz = /bits/ 64 <594000000>;
+			opp-microvolt = <1000000>;
+			opp-microvolt-speed1-pvs4-v0 = <875000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-648000000 {
+			opp-hz = /bits/ 64 <648000000>;
+			opp-microvolt = <1025000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-702000000 {
+			opp-hz = /bits/ 64 <702000000>;
+			opp-microvolt = <1025000>;
+			opp-microvolt-speed1-pvs4-v0 = <875000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-756000000 {
+			opp-hz = /bits/ 64 <756000000>;
+			opp-microvolt = <1075000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-810000000 {
+			opp-hz = /bits/ 64 <810000000>;
+			opp-microvolt = <1075000>;
+			opp-microvolt-speed1-pvs4-v0 = <887500>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-864000000 {
+			opp-hz = /bits/ 64 <864000000>;
+			opp-microvolt = <1100000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-918000000 {
+			opp-hz = /bits/ 64 <918000000>;
+			opp-microvolt = <1100000>;
+			opp-microvolt-speed1-pvs4-v0 = <900000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-972000000 {
+			opp-hz = /bits/ 64 <972000000>;
+			opp-microvolt = <1125000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1026000000 {
+			opp-hz = /bits/ 64 <1026000000>;
+			opp-microvolt = <1125000>;
+			opp-microvolt-speed1-pvs4-v0 = <925000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1080000000 {
+			opp-hz = /bits/ 64 <1080000000>;
+			opp-microvolt = <1175000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1134000000 {
+			opp-hz = /bits/ 64 <1134000000>;
+			opp-microvolt = <1175000>;
+			opp-microvolt-speed1-pvs4-v0 = <950000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1188000000 {
+			opp-hz = /bits/ 64 <1188000000>;
+			opp-microvolt = <1200000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1242000000 {
+			opp-hz = /bits/ 64 <1242000000>;
+			opp-microvolt = <1200000>;
+			opp-microvolt-speed1-pvs4-v0 = <962500>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1296000000 {
+			opp-hz = /bits/ 64 <1296000000>;
+			opp-microvolt = <1225000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1350000000 {
+			opp-hz = /bits/ 64 <1350000000>;
+			opp-microvolt = <1225000>;
+			opp-microvolt-speed1-pvs4-v0 = <975000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1404000000 {
+			opp-hz = /bits/ 64 <1404000000>;
+			opp-microvolt = <1237500>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1458000000 {
+			opp-hz = /bits/ 64 <1458000000>;
+			opp-microvolt = <1237500>;
+			opp-microvolt-speed1-pvs4-v0 = <1000000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1512000000 {
+			opp-hz = /bits/ 64 <1512000000>;
+			opp-microvolt = <1250000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1566000000 {
+			opp-hz = /bits/ 64 <1566000000>;
+			opp-microvolt = <1250000>;
+			opp-microvolt-speed1-pvs4-v0 = <1037500>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1674000000 {
+			opp-hz = /bits/ 64 <1674000000>;
+			opp-microvolt = <1250000>;
+			opp-microvolt-speed1-pvs4-v0 = <1075000>;
+			opp-supported-hw = <0x7fff>;
+		};
+
+		opp-1728000000 {
+			opp-hz = /bits/ 64 <1728000000>;
+			opp-microvolt = <1250000>;
+			opp-microvolt-speed1-pvs4-v0 = <1100000>;
+			opp-supported-hw = <0x7fff>;
+		};
+	};
+
+	kraitcc: clock-controller {
+		compatible = "qcom,krait-cc-v1";
+		clocks = <&gcc PLL9>, <&gcc PLL10>, <&gcc PLL16>, <&gcc PLL17>,
+			 <&acc0>, <&acc1>, <&acc2>, <&acc3>,
+			 <&gcc PLL12>, <&pxo_board>;
+		clock-names = "hfpll0", "hfpll1", "hfpll2", "hfpll3",
+			      "acpu0_aux", "acpu1_aux", "acpu2_aux", "acpu3_aux",
+			      "hfpll_l2", "qsb";
+		#clock-cells = <1>;
+
+		/*
+		 * Nothing scales the L2 clock in the mainline cpufreq path,
+		 * so pin it at the level the downstream tables use for every
+		 * core frequency >= 1080 MHz (L2(14) = 1134 MHz).  The clock
+		 * core applies assigned-clock-rates right after krait-cc
+		 * registers its provider, i.e. after the L2 reinitialisation
+		 * in the driver probe.
+		 */
+		assigned-clocks = <&kraitcc 4>;
+		assigned-clock-rates = <1134000000>;
 	};
 
 	memory@0 {
@@ -707,6 +931,10 @@
 			reg = <0x00700000 0x1000>;
 			#address-cells = <1>;
 			#size-cells = <1>;
+
+			pvs_efuse: pvs@c0 {
+				reg = <0xc0 0x04>;
+			};
 
 			tsens_calib: calib@404 {
 				reg = <0x404 0x10>;

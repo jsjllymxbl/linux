@@ -333,7 +333,6 @@
 			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 7>;
-			coefficients = <1199 0>;
 
 			trips {
 				cpu_alert0: trip0 {
@@ -361,7 +360,6 @@
 			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 8>;
-			coefficients = <1132 0>;
 
 			trips {
 				cpu_alert1: trip0 {
@@ -389,7 +387,6 @@
 			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 9>;
-			coefficients = <1199 0>;
 
 			trips {
 				cpu_alert2: trip0 {
@@ -417,7 +414,6 @@
 			polling-delay = <1000>;
 
 			thermal-sensors = <&tsens 10>;
-			coefficients = <1132 0>;
 
 			trips {
 				cpu_alert3: trip0 {

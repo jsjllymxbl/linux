@@ -780,8 +780,18 @@ static int tsens_set_trips(struct thermal_zone_device *tz, int low, int high)
 	/* Write the new thresholds and clear the status */
 	regmap_field_write(priv->rf[LOW_THRESH_0 + hw_id], low_val);
 	regmap_field_write(priv->rf[UP_THRESH_0 + hw_id], high_val);
-	tsens_set_interrupt(priv, hw_id, LOWER, true);
-	tsens_set_interrupt(priv, hw_id, UPPER, true);
+
+	/*
+	 * Pre v0.1 IP has no interrupt enable mask: the LOWER/UPPER INT_CLEAR
+	 * bits sit in CNTL and are shared with the enable bits of sensors 6
+	 * and 7 (bits 9 and 10).  Calling tsens_set_interrupt(..., true)
+	 * writes 0 to them, which silently switches those sensors off, so
+	 * leave them alone - VER_0 interrupts are always enabled anyway.
+	 */
+	if (tsens_version(priv) >= VER_0_1) {
+		tsens_set_interrupt(priv, hw_id, LOWER, true);
+		tsens_set_interrupt(priv, hw_id, UPPER, true);
+	}
 
 	spin_unlock_irqrestore(&priv->ul_lock, flags);
 

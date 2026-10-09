@@ -390,6 +390,32 @@ static int a3xx_hw_init(struct msm_gpu *gpu)
 	return a3xx_me_init(gpu) ? 0 : -EINVAL;
 }
 
+/*
+ * The hangcheck fires when the fence has not advanced for
+ * DRM_MSM_HANGCHECK_PROGRESS_RETRIES consecutive polls.  A fence that does
+ * not advance only means the CP is stuck if the CP is also not making
+ * progress through the command stream, which is what this checks: on a slow
+ * frame (the GPU spends a while at its lowest frequency after being idle)
+ * the CP moves between indirect buffers and the state changes, so no
+ * recovery is triggered.
+ */
+static bool a3xx_progress(struct msm_gpu *gpu, struct msm_ringbuffer *ring)
+{
+	struct msm_cp_state cp_state = {
+		.ib1_base = gpu_read(gpu, REG_AXXX_CP_IB1_BASE),
+		.ib2_base = gpu_read(gpu, REG_AXXX_CP_IB2_BASE),
+		.ib1_rem  = gpu_read(gpu, REG_AXXX_CP_IB1_BUFSZ),
+		.ib2_rem  = gpu_read(gpu, REG_AXXX_CP_IB2_BUFSZ),
+	};
+	bool progress;
+
+	progress = !!memcmp(&cp_state, &ring->last_cp_state, sizeof(cp_state));
+
+	ring->last_cp_state = cp_state;
+
+	return progress;
+}
+
 static void a3xx_recover(struct msm_gpu *gpu)
 {
 	int i;
@@ -650,6 +676,7 @@ const struct adreno_gpu_funcs a3xx_gpu_funcs = {
 		.pm_suspend = a3xx_pm_suspend,
 		.pm_resume = msm_gpu_pm_resume,
 		.recover = a3xx_recover,
+		.progress = a3xx_progress,
 		.submit = a3xx_submit,
 		.active_ring = adreno_active_ring,
 		.irq = a3xx_irq,

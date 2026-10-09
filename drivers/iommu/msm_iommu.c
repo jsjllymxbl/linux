@@ -287,8 +287,16 @@ static void __program_context(void __iomem *base, int ctx,
 	/* Enable context fault interrupt */
 	SET_CFEIE(base, ctx, 1);
 
-	/* Stall access on a context fault and let the handler deal with it */
-	SET_CFCFG(base, ctx, 1);
+	/*
+	 * Terminate the faulting transaction instead of stalling it.
+	 *
+	 * In stall mode clearing the FSR makes the SMMU retry the access, so
+	 * a fault that is not going to go away just loops (observed in the
+	 * millions on gfx3d) and the master keeps waiting on a memory access
+	 * that never completes.  Terminating hands the master a normal bus
+	 * error instead, which it can report and be reset out of.
+	 */
+	SET_CFCFG(base, ctx, 0);
 
 	/* Redirect all cacheable requests to L2 slave port. */
 	SET_RCISH(base, ctx, 1);
@@ -657,10 +665,15 @@ fail:
 	return ret;
 }
 
+static DEFINE_RATELIMIT_STATE(msm_iommu_fault_rs,
+			      DEFAULT_RATELIMIT_INTERVAL,
+			      DEFAULT_RATELIMIT_BURST);
+
 irqreturn_t msm_iommu_fault_handler(int irq, void *dev_id)
 {
 	struct msm_iommu_dev *iommu = dev_id;
 	unsigned int fsr;
+	bool handled = false;
 	int i, ret;
 
 	spin_lock(&msm_iommu_lock);
@@ -670,26 +683,44 @@ irqreturn_t msm_iommu_fault_handler(int irq, void *dev_id)
 		goto fail;
 	}
 
-	pr_err("Unexpected IOMMU page fault!\n");
-	pr_err("base = %08x\n", (unsigned int)iommu->base);
-
 	ret = __enable_clocks(iommu);
 	if (ret)
 		goto fail;
 
 	for (i = 0; i < iommu->ncb; i++) {
 		fsr = GET_FSR(iommu->base, i);
-		if (fsr) {
+		if (!fsr)
+			continue;
+
+		if (__ratelimit(&msm_iommu_fault_rs)) {
+			pr_err("Unexpected IOMMU page fault! (irq %d)\n", irq);
+			pr_err("base = %08x\n", (unsigned int)iommu->base);
 			pr_err("Fault occurred in context %d.\n", i);
 			pr_err("Interesting registers:\n");
 			print_ctx_regs(iommu->base, i);
-			SET_FSR(iommu->base, i, 0x4000000F);
 		}
+
+		/*
+		 * The faulting transaction has already been terminated (the
+		 * context bank runs with CFCFG=0), so only the fault record
+		 * needs clearing to deassert the level triggered interrupt.
+		 */
+		SET_FSR(iommu->base, i, 0x4000000F);
+
+		handled = true;
 	}
 	__disable_clocks(iommu);
 fail:
 	spin_unlock(&msm_iommu_lock);
-	return 0;
+
+	/*
+	 * Returning IRQ_NONE makes the IRQ core treat the just cleared level
+	 * triggered interrupt as spurious and, after enough of them, disable
+	 * it entirely ("irq N: nobody cared").  From then on nobody clears
+	 * FSR and the faulting master waits forever on a memory access that
+	 * never completes.
+	 */
+	return handled ? IRQ_HANDLED : IRQ_NONE;
 }
 
 static struct iommu_ops msm_iommu_ops = {

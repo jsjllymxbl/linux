@@ -6,6 +6,8 @@
  * Copyright (c) 2014 The Linux Foundation. All rights reserved.
  */
 
+#include <linux/delay.h>
+
 #include "a3xx_gpu.h"
 
 #define A3XX_INT0_MASK \
@@ -555,25 +557,39 @@ static u64 a3xx_gpu_busy(struct msm_gpu *gpu, unsigned long *out_sample_rate)
 	return busy_cycles;
 }
 
+/*
+ * Ask the VBIF to stop accepting new transactions from the XIN ports and give
+ * it a moment to drain them.
+ *
+ * Waiting for the ack with spin_until() means waiting ADRENO_IDLE_TIMEOUT - a
+ * whole second of busy-waiting, with the GPU still clocked, because
+ * a3xx_pm_suspend() only disables the clocks after this returns - and the ack
+ * may never come at all.  It does not on the a320 in the Mi 2: with the
+ * request written to VBIF_XIN_HALT_CTRL0, both CTRL0 and CTRL1 read back as
+ * zero, so there is nothing here to wait for.  (The a306 behaves differently
+ * again: its CTRL0 mirrors the request, and only three of the six ports
+ * exist, so it needs a narrower mask.)  So wait a fixed, short time and carry
+ * on either way.  Carrying on is safe: the GPU is already idle, because
+ * a3xx_pm_suspend() checks a3xx_idle() first, and a3xx_hw_init() soft-resets
+ * the VBIF on the way back up.
+ */
 static void a3xx_vbif_halt(struct msm_gpu *gpu)
 {
-	u32 ack;
-	int ret;
+	u32 ack = 0;
+	int i;
 
 	gpu_write(gpu, REG_A3XX_VBIF_XIN_HALT_CTRL0,
 		  A3XX_VBIF_XIN_HALT_CTRL0_MASK);
-	ret = spin_until(((ack = gpu_read(gpu, REG_A3XX_VBIF_XIN_HALT_CTRL1)) &
-			  A3XX_VBIF_XIN_HALT_CTRL0_MASK) ==
-			 A3XX_VBIF_XIN_HALT_CTRL0_MASK);
+	for (i = 0; i < 100; i++) {
+		ack = gpu_read(gpu, REG_A3XX_VBIF_XIN_HALT_CTRL1) &
+		      A3XX_VBIF_XIN_HALT_CTRL0_MASK;
+		if (ack == A3XX_VBIF_XIN_HALT_CTRL0_MASK)
+			break;
+		udelay(1);
+	}
 	gpu_write(gpu, REG_A3XX_VBIF_XIN_HALT_CTRL0, 0);
 
-	/*
-	 * The halt is only belt and braces: the GPU is already idle here, so
-	 * the ack is not required to keep pending transactions from being
-	 * dropped.  Failing the suspend because the ack never shows up would
-	 * leave the GPU powered for the rest of the uptime, so only warn.
-	 */
-	if (ret)
+	if (ack != A3XX_VBIF_XIN_HALT_CTRL0_MASK)
 		dev_warn_once(&gpu->pdev->dev,
 			     "VBIF XIN halt was not acknowledged (%08x)\n", ack);
 }

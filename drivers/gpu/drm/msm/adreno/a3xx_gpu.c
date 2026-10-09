@@ -120,6 +120,18 @@ static int a3xx_hw_init(struct msm_gpu *gpu)
 
 	DBG("%s", gpu->name);
 
+	/*
+	 * Soft reset the GPU.  The power rail is never actually turned off on
+	 * these devices, so after a runtime suspend the blocks are only clock
+	 * gated with their state machines mid-transaction.  Reloading the
+	 * microcode and re-running CP_ME_INIT on that leaves the core stuck
+	 * with GPU_BUSY asserted, so do what a3xx_recover() does and put the
+	 * hardware back into a known state first.
+	 */
+	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 1);
+	gpu_read(gpu, REG_A3XX_RBBM_SW_RESET_CMD);
+	gpu_write(gpu, REG_A3XX_RBBM_SW_RESET_CMD, 0);
+
 	if (adreno_is_a305(adreno_gpu)) {
 		/* Set up 16 deep read/write request queues: */
 		gpu_write(gpu, REG_A3XX_VBIF_IN_RD_LIM_CONF0, 0x10101010);

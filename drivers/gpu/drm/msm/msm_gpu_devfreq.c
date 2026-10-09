@@ -90,13 +90,24 @@ static int msm_devfreq_get_dev_status(struct device *dev,
 	status->total_time = ktime_us_delta(time, df->time);
 	df->time = time;
 
-	if (df->suspended) {
+	if (df->suspended || gpu->needs_hw_init) {
 		mutex_unlock(&df->lock);
 		status->busy_time = 0;
 		return 0;
 	}
 
 	busy_cycles = gpu->funcs->gpu_busy(gpu, &sample_rate);
+	if (busy_cycles < df->busy_cycles) {
+		/*
+		 * The counter was reset (gpu->funcs->hw_init() started it over),
+		 * so there is nothing meaningful to account for this interval.
+		 */
+		df->busy_cycles = busy_cycles;
+		mutex_unlock(&df->lock);
+		status->busy_time = 0;
+		return 0;
+	}
+
 	busy_time = busy_cycles - df->busy_cycles;
 	df->busy_cycles = busy_cycles;
 
@@ -223,6 +234,27 @@ void msm_devfreq_cleanup(struct msm_gpu *gpu)
 
 	devfreq_cooling_unregister(gpu->cooling);
 	dev_pm_qos_remove_request(&df->boost_freq);
+}
+
+void msm_devfreq_hw_init(struct msm_gpu *gpu)
+{
+	struct msm_gpu_devfreq *df = &gpu->devfreq;
+	unsigned long sample_rate;
+
+	if (!has_devfreq(gpu))
+		return;
+
+	/*
+	 * The busy cycle counter is reset by the hardware init, so start the
+	 * interval over instead of letting msm_devfreq_get_dev_status() see a
+	 * counter that went backwards.
+	 */
+	mutex_lock(&df->lock);
+	if (!df->suspended) {
+		df->busy_cycles = gpu->funcs->gpu_busy(gpu, &sample_rate);
+		df->time = ktime_get();
+	}
+	mutex_unlock(&df->lock);
 }
 
 void msm_devfreq_resume(struct msm_gpu *gpu)

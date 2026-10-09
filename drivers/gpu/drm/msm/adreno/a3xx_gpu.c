@@ -507,7 +507,7 @@ static u64 a3xx_gpu_busy(struct msm_gpu *gpu, unsigned long *out_sample_rate)
 	return busy_cycles;
 }
 
-static int a3xx_vbif_halt(struct msm_gpu *gpu)
+static void a3xx_vbif_halt(struct msm_gpu *gpu)
 {
 	u32 ack;
 	int ret;
@@ -519,22 +519,23 @@ static int a3xx_vbif_halt(struct msm_gpu *gpu)
 			 A3XX_VBIF_XIN_HALT_CTRL0_MASK);
 	gpu_write(gpu, REG_A3XX_VBIF_XIN_HALT_CTRL0, 0);
 
+	/*
+	 * The halt is only belt and braces: the GPU is already idle here, so
+	 * the ack is not required to keep pending transactions from being
+	 * dropped.  Failing the suspend because the ack never shows up would
+	 * leave the GPU powered for the rest of the uptime, so only warn.
+	 */
 	if (ret)
-		return -EBUSY;
-
-	return 0;
+		dev_warn_once(&gpu->pdev->dev,
+			     "VBIF XIN halt was not acknowledged (%08x)\n", ack);
 }
 
 static int a3xx_pm_suspend(struct msm_gpu *gpu)
 {
-	int ret;
-
 	if (!a3xx_idle(gpu))
 		return -EBUSY;
 
-	ret = a3xx_vbif_halt(gpu);
-	if (ret)
-		return ret;
+	a3xx_vbif_halt(gpu);
 
 	return msm_gpu_pm_suspend(gpu);
 }

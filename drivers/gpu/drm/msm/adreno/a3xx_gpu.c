@@ -377,6 +377,16 @@ static int a3xx_hw_init(struct msm_gpu *gpu)
 	/* clear ME_HALT to start micro engine */
 	gpu_write(gpu, REG_AXXX_CP_ME_CNTL, 0);
 
+	/*
+	 * The GPU has lost all of its state, so whatever submit comes next has
+	 * to restore the context it belongs to.  Without this, submits from
+	 * the context that happened to be current when the GPU was reset skip
+	 * their CMD_CTX_RESTORE_BUF and run with no state loaded.  a5xx/a6xx/
+	 * a8xx all do the same.
+	 */
+	for (i = 0; i < gpu->nr_rings; i++)
+		gpu->rb[i]->cur_ctx_seqno = 0;
+
 	return a3xx_me_init(gpu) ? 0 : -EINVAL;
 }
 

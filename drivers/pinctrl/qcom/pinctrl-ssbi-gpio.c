@@ -484,6 +484,7 @@ static int pm8xxx_gpio_direction_output(struct gpio_chip *chip,
 	struct pm8xxx_gpio *pctrl = gpiochip_get_data(chip);
 	struct pm8xxx_pin_data *pin = pctrl->desc.pins[offset].drv_data;
 	u8 val;
+	int ret;
 
 	pin->mode = PM8XXX_GPIO_MODE_OUTPUT;
 	pin->output_value = !!value;
@@ -492,7 +493,22 @@ static int pm8xxx_gpio_direction_output(struct gpio_chip *chip,
 	val |= pin->open_drain << 1;
 	val |= pin->output_value;
 
-	pm8xxx_write_bank(pctrl, pin, 1, val);
+	ret = pm8xxx_write_bank(pctrl, pin, 1, val);
+	if (ret)
+		return ret;
+
+	/*
+	 * The pin may still be disabled (tristate) in the PMIC, in which
+	 * case it cannot drive its output.  Enable it, preserving the
+	 * configured drive strength.
+	 */
+	if (pin->disable) {
+		val = pin->output_strength << 2;
+		ret = pm8xxx_write_bank(pctrl, pin, 3, val);
+		if (ret)
+			return ret;
+		pin->disable = 0;
+	}
 
 	return 0;
 }
@@ -525,6 +541,7 @@ static int pm8xxx_gpio_set(struct gpio_chip *chip, unsigned int offset,
 	struct pm8xxx_gpio *pctrl = gpiochip_get_data(chip);
 	struct pm8xxx_pin_data *pin = pctrl->desc.pins[offset].drv_data;
 	u8 val;
+	int ret;
 
 	pin->output_value = !!value;
 
@@ -532,7 +549,20 @@ static int pm8xxx_gpio_set(struct gpio_chip *chip, unsigned int offset,
 	val |= pin->open_drain << 1;
 	val |= pin->output_value;
 
-	return pm8xxx_write_bank(pctrl, pin, 1, val);
+	ret = pm8xxx_write_bank(pctrl, pin, 1, val);
+	if (ret)
+		return ret;
+
+	/* A disabled (tristate) pin cannot drive an output. */
+	if (pin->mode == PM8XXX_GPIO_MODE_OUTPUT && pin->disable) {
+		val = pin->output_strength << 2;
+		ret = pm8xxx_write_bank(pctrl, pin, 3, val);
+		if (ret)
+			return ret;
+		pin->disable = 0;
+	}
+
+	return 0;
 }
 
 static int pm8xxx_gpio_of_xlate(struct gpio_chip *chip,

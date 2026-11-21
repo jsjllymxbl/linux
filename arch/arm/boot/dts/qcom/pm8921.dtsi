@@ -17,6 +17,34 @@
 			pull-up;
 		};
 
+		/*
+		 * Switch mode battery charger (SMBC).  The battery and the
+		 * temperature limits are board specific, so the node is
+		 * only enabled by the boards that wire a battery up.
+		 */
+		pm8921_chg: charger@204 {
+			compatible = "qcom,pm8921-charger";
+			reg = <0x204>;
+
+			interrupts-extended = <&pm8921 15 IRQ_TYPE_EDGE_BOTH>,   /* usbin-valid */
+					      <&pm8921 27 IRQ_TYPE_EDGE_RISING>, /* chg-gone */
+					      <&pm8921 26 IRQ_TYPE_EDGE_BOTH>,   /* batt-temp-ok */
+					      <&pm8921 30 IRQ_TYPE_EDGE_RISING>, /* batt-hot */
+					      <&pm8921 28 IRQ_TYPE_EDGE_RISING>, /* batt-cold */
+					      <&pm8921 17 IRQ_TYPE_EDGE_BOTH>,   /* fast-chg */
+					      <&pm8921 21 IRQ_TYPE_EDGE_RISING>, /* chg-done */
+					      <&pm8921 20 IRQ_TYPE_EDGE_RISING>, /* chg-fail */
+					      <&pm8921 45 IRQ_TYPE_EDGE_RISING>, /* vbat-det */
+					      <&pm8921 9 IRQ_TYPE_EDGE_RISING>,  /* wdog */
+					      <&pm8921 13 IRQ_TYPE_EDGE_BOTH>;   /* batt-inserted */
+			interrupt-names = "usbin-valid", "chg-gone",
+					  "batt-temp-ok", "batt-hot", "batt-cold",
+					  "fast-chg", "chg-done", "chg-fail",
+					  "vbat-det", "wdog", "batt-inserted";
+
+			status = "disabled";
+		};
+
 		pm8921_vibrator: vibrator@4a {
 			compatible = "qcom,pm8921-vib";
 			reg = <0x4a>;

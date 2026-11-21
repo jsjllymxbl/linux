@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/power/supply/qcom,pm8921-charger.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm PM8921 switch mode battery charger
+
+maintainers:
+  - jsjllymxbl <jsjllymxbl@gmail.com>
+
+description: |
+  The PM8921 PMIC integrates a single cell lithium ion switch mode battery
+  charger (SMBC) with one USB and one DC input path.  The charge cycle is run
+  by the charger state machine; software only programs the voltage and current
+  limits and optionally restricts the USB input current.
+
+  The block is also the VBUS detector of the board (its VBUS valid interrupt
+  lives in the always on power domain), so it doubles as the extcon provider
+  for the USB controller.
+
+properties:
+  compatible:
+    const: qcom,pm8921-charger
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 11
+
+  interrupt-names:
+    items:
+      - const: usbin-valid
+      - const: chg-gone
+      - const: batt-temp-ok
+      - const: batt-hot
+      - const: batt-cold
+      - const: fast-chg
+      - const: chg-done
+      - const: chg-fail
+      - const: vbat-det
+      - const: wdog
+      - const: batt-inserted
+
+  qcom,max-voltage-mv:
+    description: Battery float voltage in millivolts.
+    minimum: 3400
+    maximum: 4500
+    default: 4200
+
+  qcom,resume-voltage-delta-mv:
+    description: |
+      Voltage drop below the float voltage that restarts charging once the
+      battery has been fully charged, in millivolts.
+    default: 20
+
+  qcom,term-current-ma:
+    description: End of charge current in milliamps.
+    minimum: 50
+    maximum: 200
+    default: 100
+
+  qcom,max-charge-current-ma:
+    description: Maximum battery charge current in milliamps.
+    minimum: 325
+    maximum: 2000
+    default: 1000
+
+  qcom,usb-current-limit-ma:
+    description: |
+      Default USB input current limit in milliamps.  It can be changed at
+      runtime through the "input_current_limit" property of the registered
+      power supply.
+    default: 500
+
+  qcom,safety-time-min:
+    description: Maximum total charge time in minutes.
+    minimum: 4
+    maximum: 512
+    default: 480
+
+required:
+  - compatible
+  - reg
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/irq.h>
+
+    pmic {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        interrupt-controller;
+        #interrupt-cells = <2>;
+
+        charger@204 {
+            compatible = "qcom,pm8921-charger";
+            reg = <0x204>;
+
+            interrupts-extended = <&pmic 15 IRQ_TYPE_EDGE_BOTH>,
+                                  <&pmic 27 IRQ_TYPE_EDGE_RISING>,
+                                  <&pmic 26 IRQ_TYPE_EDGE_BOTH>,
+                                  <&pmic 30 IRQ_TYPE_EDGE_RISING>,
+                                  <&pmic 28 IRQ_TYPE_EDGE_RISING>,
+                                  <&pmic 17 IRQ_TYPE_EDGE_BOTH>,
+                                  <&pmic 21 IRQ_TYPE_EDGE_RISING>,
+                                  <&pmic 20 IRQ_TYPE_EDGE_RISING>,
+                                  <&pmic 45 IRQ_TYPE_EDGE_RISING>,
+                                  <&pmic 9 IRQ_TYPE_EDGE_RISING>,
+                                  <&pmic 13 IRQ_TYPE_EDGE_BOTH>;
+            interrupt-names = "usbin-valid", "chg-gone",
+                              "batt-temp-ok", "batt-hot", "batt-cold",
+                              "fast-chg", "chg-done", "chg-fail",
+                              "vbat-det", "wdog", "batt-inserted";
+
+            qcom,max-voltage-mv = <4200>;
+            qcom,max-charge-current-ma = <1000>;
+            qcom,term-current-ma = <100>;
+        };
+    };
+...

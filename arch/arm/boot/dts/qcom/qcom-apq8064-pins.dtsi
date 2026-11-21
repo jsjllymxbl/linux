@@ -148,6 +148,20 @@
 		bias-disable;
 	};
 
+	i2c5_default_state: i2c5-default-state {
+		pins = "gpio53", "gpio54";
+		function = "gsbi5";
+		drive-strength = <16>;
+		bias-disable;
+	};
+
+	i2c5_sleep_state: i2c5-sleep-state {
+		pins = "gpio53", "gpio54";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
 	i2c6_default_state: i2c6-default-state {
 		pins = "gpio16", "gpio17";
 		function = "gsbi6";

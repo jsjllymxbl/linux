@@ -859,6 +859,20 @@
 				#address-cells = <1>;
 				#size-cells = <0>;
 			};
+
+			gsbi5_i2c: i2c@1a280000 {
+				compatible = "qcom,i2c-qup-v1.1.1";
+				reg = <0x1a280000 0x1000>;
+				pinctrl-0 = <&i2c5_default_state>;
+				pinctrl-1 = <&i2c5_sleep_state>;
+				pinctrl-names = "default", "sleep";
+				interrupts = <GIC_SPI 155 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&gcc GSBI5_QUP_CLK>, <&gcc GSBI5_H_CLK>;
+				clock-names = "core", "iface";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				status = "disabled";
+			};
 		};
 
 		gsbi6: gsbi@16500000 {

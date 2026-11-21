@@ -731,6 +731,21 @@ config CHARGER_MT6370
 	  This driver can also be built as a module. If so, the module
 	  will be called "mt6370-charger".
 
+config CHARGER_QCOM_PM8921
+	tristate "Qualcomm PM8921 Switch-Mode Battery Charger"
+	depends on MFD_PM8XXX || COMPILE_TEST
+	depends on OF
+	depends on EXTCON
+	help
+	  Say Y to include support for the Switch-Mode Battery Charger
+	  (SMBC) found in the Qualcomm PM8921 PMIC, as used on the
+	  APQ8064/MSM8960 based boards (Xiaomi Mi 2, Nexus 4, ...).  The
+	  charger is an integrated single-cell lithium-ion battery
+	  charger with an USB and a DC input path.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called qcom_pm8921_charger.
+
 config CHARGER_QCOM_SMBB
 	tristate "Qualcomm Switch-Mode Battery Charger and Boost"
 	depends on MFD_SPMI_PMIC || COMPILE_TEST

@@ -28,8 +28,6 @@
  *   - eS310 voice processor    : gsbi1_i2c @0x3e
  *   - SiI9244 MHL bridge       : gsbi1_i2c @0x39/@0x3d/@0x49
  *   - ISL29029 ALS/proximity   : gsbi2_i2c @0x44
- *   - BQ27520 fuel gauge       : gsbi5_i2c @0x55 (gsbi5 has no i2c node in
- *     qcom-apq8064.dtsi yet), interrupt on TLMM GPIO26 ("BATT_INT")
  */
 
 #include <dt-bindings/gpio/gpio.h>
@@ -543,6 +541,61 @@
 	};
 };
 
+/* "I2C5_BMS": fuel gauge of the battery pack, GPIO54 (SCL) / GPIO53 (SDA) */
+&gsbi5 {
+	qcom,mode = <GSBI_PROT_I2C>;
+	status = "okay";
+};
+
+&gsbi5_i2c {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/*
+	 * The reference design carries a BQ27520-G1 in the battery pack.  It
+	 * does not acknowledge its address on the units seen so far - the bus
+	 * itself works, not a single address answers - so the node stays
+	 * disabled rather than polling a chip that is not there.  Drop the
+	 * status for a pack that has a working gauge.
+	 */
+	fuel-gauge@55 {
+		compatible = "ti,bq27520g1";
+		reg = <0x55>;
+		status = "disabled";
+
+		interrupt-parent = <&tlmm_pinmux>;
+		interrupts = <26 IRQ_TYPE_EDGE_FALLING>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&fuel_gauge_int_default>;
+	};
+};
+
+/*
+ * PM8921 switch mode battery charger, driving a single cell 4.2 V pack.
+ * The battery temperature protection is done by the JEITA comparators of
+ * the block against the pack thermistor ("BATT_THERM"), so only the voltage
+ * and current limits are described here - they are the ones of the vendor
+ * board file (arch/arm/mach-msm/board-aries-pmic.c).
+ */
+&pm8921_chg {
+	status = "okay";
+
+	qcom,max-voltage-mv = <4200>;
+	qcom,resume-voltage-delta-mv = <20>;
+	qcom,term-current-ma = <100>;
+	qcom,max-charge-current-ma = <1000>;
+	/*
+	 * The USB gadget stack only reports that a charger is present, it
+	 * cannot tell a wall charger from a host port on this board, so stay
+	 * within the 500 mA a standard downstream port has to provide.
+	 * Userspace can raise the limit through "input_current_limit" once
+	 * the source is known to be a dedicated charger.
+	 */
+	qcom,usb-current-limit-ma = <500>;
+	qcom,safety-time-min = <480>;
+};
+
 /* eMMC (SDCC1, 8 bit, non removable) */
 &sdcc1 {
 	vmmc-supply = <&pm8921_l5>;
@@ -556,9 +609,15 @@
 	v1p8-supply = <&pm8921_l4>;
 };
 
-/* Micro USB, USB3 is routed to the SiI9244 MHL bridge */
+/*
+ * Micro USB (USB3 is routed to the SiI9244 MHL bridge).  The controller
+ * cannot see VBUS once it runtime suspends, so the cable state comes from
+ * the PMIC charger block, whose usbin-valid interrupt lives in the always
+ * on power domain.
+ */
 &usb1 {
 	dr_mode = "otg";
+	extcon = <&pm8921_chg>;
 	status = "okay";
 };
 
@@ -1019,5 +1078,14 @@
 		drive-strength = <2>;
 		input-enable;
 		bias-pull-down;
+	};
+
+	/* BATT_INT from the BQ27520, open drain active low */
+	fuel_gauge_int_default: fuel-gauge-int-default-state {
+		pins = "gpio26";
+		function = "gpio";
+		drive-strength = <2>;
+		input-enable;
+		bias-pull-up;
 	};
 };

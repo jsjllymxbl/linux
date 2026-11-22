@@ -624,13 +624,15 @@
 	qcom,term-current-ma = <100>;
 	qcom,max-charge-current-ma = <1000>;
 	/*
-	 * The USB gadget stack only reports that a charger is present, it
-	 * cannot tell a wall charger from a host port on this board, so stay
-	 * within the 500 mA a standard downstream port has to provide.
-	 * Userspace can raise the limit through "input_current_limit" once
-	 * the source is known to be a dedicated charger.
+	 * Neither the ULPI PHY nor the charger can tell a wall charger from
+	 * a host port on this board, so the limit has to be picked for the
+	 * common case.  The vendor software runs this same board at 1.5 A
+	 * (PBL_ACCESS2 IUSB_MAX = 7) and the pack is capped at 975 mA on
+	 * the battery side anyway; 500 mA is not enough to even cover the
+	 * system load once a desktop session runs.  Userspace can lower it
+	 * through "input_current_limit" when plugged into a weak port.
 	 */
-	qcom,usb-current-limit-ma = <500>;
+	qcom,usb-current-limit-ma = <1500>;
 	qcom,safety-time-min = <480>;
 };
 

@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/power/supply/qcom,pm8921-bms.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm PM8921 battery monitor
+
+maintainers:
+  - jsjllymxbl <jsjllymxbl@gmail.com>
+
+description: |
+  The PM8921 PMIC integrates a battery monitor system (BMS): a coulomb
+  counter with its own ADC that measures the battery voltage and the
+  voltage across the pack current sense resistor.  It is the only source
+  of battery data on the boards that use this PMIC without an external
+  fuel gauge.
+
+properties:
+  compatible:
+    const: qcom,pm8921-bms
+
+  reg:
+    maxItems: 1
+
+  qcom,r-sense-mohm:
+    description: Value of the current sense resistor between the battery
+      and the system, in milliohms.
+    default: 10
+    minimum: 1
+
+  monitored-battery:
+    description: |
+      Phandle to the battery node that describes the pack: the driver
+      needs its open circuit voltage to capacity table and its internal
+      resistance to turn the measured terminal voltage into a state of
+      charge.
+    maxItems: 1
+
+required:
+  - compatible
+  - reg
+  - monitored-battery
+
+additionalProperties: false
+
+examples:
+  - |
+    battery: battery {
+        compatible = "simple-battery";
+        constant-charge-voltage-max-microvolt = <4200000>;
+        charge-full-design-microamp-hours = <2000000>;
+        factory-internal-resistance-micro-ohms = <236000>;
+        ocv-capacity-celsius = <25>;
+        ocv-capacity-table-0 = <4163000 100>, <4108000 95>, <4069000 90>,
+                               <4019000 85>, <3981000 80>, <3954000 75>,
+                               <3400000 1>, <3000000 0>;
+    };
+
+    pmic {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        battery-monitor@224 {
+            compatible = "qcom,pm8921-bms";
+            reg = <0x224>;
+
+            monitored-battery = <&battery>;
+            qcom,r-sense-mohm = <10>;
+        };
+    };
+...

@@ -39,6 +39,8 @@
 #define PM8921_BMS_OUTPUT0		0x230
 #define PM8921_BMS_OUTPUT1		0x231
 #define PM8921_BMS_TOLERANCES		0x232
+/* survives a reboot: the PMIC stays powered as long as the pack is in */
+#define PM8921_BMS_SOC_STORAGE		0x107
 
 /* BMS_CONTROL */
 #define BMS_EN				BIT(7)
@@ -90,7 +92,11 @@
 /* below this current the pack is considered at rest */
 #define BMS_REST_CURRENT_UA		50000
 /* deviation from the open circuit voltage estimate that re-anchors it */
-#define BMS_REANCHOR_PERCENT		5
+#define BMS_REANCHOR_PERCENT		10
+/* a stored capacity further than this from the voltage is not trusted */
+#define BMS_STORED_SOC_TOLERANCE	30
+/* 0xff marks an empty pack, 0 means that nothing is stored */
+#define BMS_SOC_STORAGE_EMPTY		0xff
 
 /**
  * struct pm8921_bms - battery monitor instance
@@ -107,6 +113,7 @@
  * @charge_anchor_uah:	charge of the pack when the counter was anchored
  * @cc_anchor:	counter value at the anchor
  * @charge_uah:	charge of the pack of the last sample
+ * @stored_capacity:	state of charge left in the PMIC by the last boot
  * @capacity:	state of charge in percent, -1 until the first anchor
  * @anchored:	whether the counter has been anchored at least once
  */
@@ -127,6 +134,7 @@ struct pm8921_bms {
 	s64			charge_anchor_uah;
 	s32			cc_anchor;
 	s64			charge_uah;
+	int			stored_capacity;
 	int			capacity;
 	bool			anchored;
 };
@@ -244,6 +252,35 @@ static s64 pm8921_bms_cc_delta_uah(struct pm8921_bms *bms, s32 cc)
 		       (s64)BMS_CC_UA_DIV * bms->r_sense_mohm);
 }
 
+/*
+ * The state of charge of the last session is left in a PMIC register that
+ * keeps its content as long as the pack is connected, which lets the
+ * estimate survive a reboot instead of starting over from the voltage.
+ */
+static int pm8921_bms_read_stored_capacity(struct pm8921_bms *bms)
+{
+	unsigned int val;
+	int ret;
+
+	ret = regmap_read(bms->map, PM8921_BMS_SOC_STORAGE, &val);
+	if (ret)
+		return -EINVAL;
+
+	if (val == BMS_SOC_STORAGE_EMPTY)
+		return 0;
+	if (val == 0 || val > 100)
+		return -EINVAL;
+
+	return val;
+}
+
+static void pm8921_bms_store_capacity(struct pm8921_bms *bms, int capacity)
+{
+	unsigned int val = capacity ? capacity : BMS_SOC_STORAGE_EMPTY;
+
+	regmap_write(bms->map, PM8921_BMS_SOC_STORAGE, val);
+}
+
 static void pm8921_bms_anchor(struct pm8921_bms *bms, int percent)
 {
 	struct power_supply_battery_info *info = bms->batt_psy->battery_info;
@@ -304,7 +341,11 @@ static void pm8921_bms_update(struct pm8921_bms *bms)
 		return;
 
 	if (!bms->anchored) {
-		pm8921_bms_anchor(bms, percent);
+		if (bms->stored_capacity >= 0 &&
+		    abs(bms->stored_capacity - percent) < BMS_STORED_SOC_TOLERANCE)
+			pm8921_bms_anchor(bms, bms->stored_capacity);
+		else
+			pm8921_bms_anchor(bms, percent);
 	} else if (pm8921_bms_charger_property(POWER_SUPPLY_PROP_STATUS) ==
 		   POWER_SUPPLY_STATUS_FULL) {
 		/* the charge is done, the counter is at the top */
@@ -318,8 +359,12 @@ static void pm8921_bms_update(struct pm8921_bms *bms)
 	charge = bms->charge_anchor_uah + pm8921_bms_cc_delta_uah(bms, cc);
 	bms->charge_uah = charge;
 
-	capacity = div_s64(charge * 100, info->charge_full_design_uah);
-	bms->capacity = clamp(capacity, 0, 100);
+	capacity = clamp(div_s64(charge * 100, info->charge_full_design_uah),
+			 0, 100);
+	if (capacity != bms->capacity) {
+		bms->capacity = capacity;
+		pm8921_bms_store_capacity(bms, capacity);
+	}
 }
 
 static void pm8921_bms_work(struct work_struct *work)
@@ -442,6 +487,7 @@ static int pm8921_bms_probe(struct platform_device *pdev)
 
 	bms->dev = &pdev->dev;
 	bms->capacity = -1;
+	bms->stored_capacity = -EINVAL;
 	mutex_init(&bms->lock);
 	platform_set_drvdata(pdev, bms);
 
@@ -459,6 +505,11 @@ static int pm8921_bms_probe(struct platform_device *pdev)
 	ret = pm8921_bms_hw_init(bms);
 	if (ret)
 		return ret;
+
+	bms->stored_capacity = pm8921_bms_read_stored_capacity(bms);
+	if (bms->stored_capacity >= 0)
+		dev_info(&pdev->dev, "state of charge of the last session: %d%%\n",
+			 bms->stored_capacity);
 
 	psy_cfg.drv_data = bms;
 	psy_cfg.fwnode = dev_fwnode(&pdev->dev);

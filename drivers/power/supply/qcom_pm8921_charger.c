@@ -146,6 +146,7 @@ enum pm8921_chg_irq_id {
 	PM8921_IRQ_VBAT_DET,
 	PM8921_IRQ_WDOG,
 	PM8921_IRQ_BATT_INSERTED,
+	PM8921_IRQ_CHG_HOT,
 	PM8921_IRQ_MAX,
 };
 
@@ -160,6 +161,7 @@ static const char *const pm8921_chg_irq_names[] = {
 	[PM8921_IRQ_VBAT_DET] = "vbat-det",
 	[PM8921_IRQ_WDOG] = "wdog",
 	[PM8921_IRQ_BATT_INSERTED] = "batt-inserted",
+	[PM8921_IRQ_CHG_HOT] = "chg-hot",
 };
 
 /**
@@ -519,6 +521,11 @@ static const int pm8921_chg_fsm_status[] = {
 	[15]				= POWER_SUPPLY_STATUS_NOT_CHARGING,
 };
 
+static bool pm8921_chg_is_hot(struct pm8921_chg *chg)
+{
+	return pm8921_chg_rt_status(chg, PM8921_IRQ_CHG_HOT) == 1;
+}
+
 static int pm8921_chg_status(struct pm8921_chg *chg)
 {
 	int fsm, ret;
@@ -533,6 +540,18 @@ static int pm8921_chg_status(struct pm8921_chg *chg)
 	fsm = pm8921_chg_get_fsm_state(chg);
 	if (fsm < 0 || fsm >= (int)ARRAY_SIZE(pm8921_chg_fsm_status))
 		return POWER_SUPPLY_STATUS_UNKNOWN;
+
+	/*
+	 * The state right after the cable was plugged in is reported as
+	 * "full" by the FSM map, but it only means that the charger waits
+	 * for the battery to be qualified.  Only call it full when the
+	 * battery is there and nothing blocks the charge.
+	 */
+	if (fsm == FSM_STATE_ON_CHG_HIGHL &&
+	    (pm8921_chg_rt_status(chg, PM8921_IRQ_BATT_INSERTED) != 1 ||
+	     pm8921_chg_is_hot(chg) ||
+	     pm8921_chg_rt_status(chg, PM8921_IRQ_VBAT_DET) == 1))
+		return POWER_SUPPLY_STATUS_NOT_CHARGING;
 
 	return pm8921_chg_fsm_status[fsm];
 }
@@ -556,6 +575,9 @@ static int pm8921_chg_charge_type(struct pm8921_chg *chg)
 
 static int pm8921_chg_health(struct pm8921_chg *chg)
 {
+	if (pm8921_chg_is_hot(chg))
+		return POWER_SUPPLY_HEALTH_OVERHEAT;
+
 	if (pm8921_chg_rt_status(chg, PM8921_IRQ_BATT_TEMP_OK) == 0) {
 		if (pm8921_chg_rt_status(chg, PM8921_IRQ_BATT_HOT) == 1)
 			return POWER_SUPPLY_HEALTH_HOT;

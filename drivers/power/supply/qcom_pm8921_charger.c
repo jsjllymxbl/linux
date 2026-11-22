@@ -170,7 +170,6 @@ static const char *const pm8921_chg_irq_names[] = {
  * @map:		regmap of the parent PMIC
  * @lock:		serialises register updates and property reads
  * @usb_psy:		registered USB power supply
- * @batt_psy:		registered battery power supply
  * @edev:		extcon device reporting the USB cable
  * @usb_nb:		notifier receiving the cable events of @edev
  * @irqs:		charger interrupt numbers, indexed by pm8921_chg_irq_id
@@ -189,7 +188,6 @@ struct pm8921_chg {
 	struct mutex		lock;	/* serialises register and FSM access */
 
 	struct power_supply	*usb_psy;
-	struct power_supply	*batt_psy;
 	struct extcon_dev	*edev;
 	struct notifier_block	usb_nb;
 
@@ -679,72 +677,10 @@ static const struct power_supply_desc pm8921_chg_usb_desc = {
 	.property_is_writeable	= pm8921_chg_usb_property_is_writeable,
 };
 
-/*
- * The battery pack of this machine has no fuel gauge that the kernel can
- * talk to (the BQ27520 of the reference design does not acknowledge its
- * I2C address, and the mainline PM8921 XOADC currently reads a constant
- * ground code on every channel), so only the properties the charger
- * hardware itself knows about are reported.  Voltage, charge counters and
- * state of charge need the PMIC BMS/coulomb counter to be brought up.
- */
-static enum power_supply_property pm8921_chg_batt_props[] = {
-	POWER_SUPPLY_PROP_PRESENT,
-	POWER_SUPPLY_PROP_STATUS,
-	POWER_SUPPLY_PROP_CHARGE_TYPE,
-	POWER_SUPPLY_PROP_HEALTH,
-	POWER_SUPPLY_PROP_TECHNOLOGY,
-};
-
-static int pm8921_chg_batt_get_property(struct power_supply *psy,
-					enum power_supply_property psp,
-					union power_supply_propval *val)
-{
-	struct pm8921_chg *chg = power_supply_get_drvdata(psy);
-	int ret = 0;
-
-	mutex_lock(&chg->lock);
-
-	switch (psp) {
-	case POWER_SUPPLY_PROP_PRESENT:
-		val->intval = pm8921_chg_rt_status(chg,
-						   PM8921_IRQ_BATT_INSERTED) == 1;
-		break;
-	case POWER_SUPPLY_PROP_STATUS:
-		val->intval = pm8921_chg_status(chg);
-		break;
-	case POWER_SUPPLY_PROP_CHARGE_TYPE:
-		val->intval = pm8921_chg_charge_type(chg);
-		break;
-	case POWER_SUPPLY_PROP_HEALTH:
-		val->intval = pm8921_chg_health(chg);
-		break;
-	case POWER_SUPPLY_PROP_TECHNOLOGY:
-		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
-		break;
-	default:
-		ret = -EINVAL;
-		break;
-	}
-
-	mutex_unlock(&chg->lock);
-
-	return ret;
-}
-
-static const struct power_supply_desc pm8921_chg_batt_desc = {
-	.name			= "pm8921-battery",
-	.type			= POWER_SUPPLY_TYPE_BATTERY,
-	.properties		= pm8921_chg_batt_props,
-	.num_properties		= ARRAY_SIZE(pm8921_chg_batt_props),
-	.get_property		= pm8921_chg_batt_get_property,
-};
-
 static void pm8921_chg_notify(struct pm8921_chg *chg)
 {
 	if (chg->usb_psy)
 		power_supply_changed(chg->usb_psy);
-	if (chg->batt_psy)
-		power_supply_changed(chg->batt_psy);
 }
 
 /*
@@ -929,13 +865,6 @@ static int pm8921_chg_probe(struct platform_device *pdev)
 	if (IS_ERR(chg->usb_psy))
 		return dev_err_probe(&pdev->dev, PTR_ERR(chg->usb_psy),
 				     "failed to register the USB supply\n");
-
-	chg->batt_psy = devm_power_supply_register(&pdev->dev,
-						   &pm8921_chg_batt_desc,
-						   &psy_cfg);
-	if (IS_ERR(chg->batt_psy))
-		return dev_err_probe(&pdev->dev, PTR_ERR(chg->batt_psy),
-				     "failed to register the battery supply\n");
 
 	for (i = 0; i < PM8921_IRQ_MAX; i++) {
 		irq_handler_t handler = pm8921_chg_isr;

@@ -46,6 +46,18 @@
 			status = "disabled";
 		};
 
+		/*
+		 * Battery monitor system (BMS): coulomb counter plus an ADC
+		 * for the battery voltage and the pack current.  The sense
+		 * resistor value and the battery profile are board specific,
+		 * so the node is only enabled by the boards that need it.
+		 */
+		pm8921_bms: battery-monitor@224 {
+			compatible = "qcom,pm8921-bms";
+			reg = <0x224>;
+			status = "disabled";
+		};
+
 		pm8921_vibrator: vibrator@4a {
 			compatible = "qcom,pm8921-vib";
 			reg = <0x4a>;

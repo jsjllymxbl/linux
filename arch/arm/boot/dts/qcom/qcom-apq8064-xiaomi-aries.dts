@@ -581,6 +581,8 @@
 &pm8921_chg {
 	status = "okay";
 
+	extcon = <&pm8921>;
+
 	qcom,max-voltage-mv = <4200>;
 	qcom,resume-voltage-delta-mv = <20>;
 	qcom,term-current-ma = <100>;
@@ -612,12 +614,12 @@
 /*
  * Micro USB (USB3 is routed to the SiI9244 MHL bridge).  The controller
  * cannot see VBUS once it runtime suspends, so the cable state comes from
- * the PMIC charger block, whose usbin-valid interrupt lives in the always
- * on power domain.
+ * the PMIC, whose VBUS valid comparator lives in the always on power
+ * domain.
  */
 &usb1 {
 	dr_mode = "otg";
-	extcon = <&pm8921_chg>;
+	extcon = <&pm8921>;
 	status = "okay";
 };
 

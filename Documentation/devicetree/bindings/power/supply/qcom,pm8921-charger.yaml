@@ -15,9 +15,8 @@ description: |
   by the charger state machine; software only programs the voltage and current
   limits and optionally restricts the USB input current.
 
-  The block is also the VBUS detector of the board (its VBUS valid interrupt
-  lives in the always on power domain), so it doubles as the extcon provider
-  for the USB controller.
+  Whether a cable is plugged in is reported by the extcon device of the PMIC,
+  which owns the VBUS valid interrupt of the block.
 
 properties:
   compatible:
@@ -26,12 +25,18 @@ properties:
   reg:
     maxItems: 1
 
+  extcon:
+    description: |
+      Phandle to the extcon device that reports the USB cable.  The charger
+      follows it to rearm a charge cycle that failed before the cable was
+      plugged in and to update the state of its power supplies.
+    maxItems: 1
+
   interrupts:
-    maxItems: 11
+    maxItems: 10
 
   interrupt-names:
     items:
-      - const: usbin-valid
       - const: chg-gone
       - const: batt-temp-ok
       - const: batt-hot
@@ -83,6 +88,7 @@ properties:
 required:
   - compatible
   - reg
+  - extcon
 
 additionalProperties: false
 
@@ -100,8 +106,9 @@ examples:
             compatible = "qcom,pm8921-charger";
             reg = <0x204>;
 
-            interrupts-extended = <&pmic 15 IRQ_TYPE_EDGE_BOTH>,
-                                  <&pmic 27 IRQ_TYPE_EDGE_RISING>,
+            extcon = <&pmic>;
+
+            interrupts-extended = <&pmic 27 IRQ_TYPE_EDGE_RISING>,
                                   <&pmic 26 IRQ_TYPE_EDGE_BOTH>,
                                   <&pmic 30 IRQ_TYPE_EDGE_RISING>,
                                   <&pmic 28 IRQ_TYPE_EDGE_RISING>,
@@ -111,10 +118,10 @@ examples:
                                   <&pmic 45 IRQ_TYPE_EDGE_RISING>,
                                   <&pmic 9 IRQ_TYPE_EDGE_RISING>,
                                   <&pmic 13 IRQ_TYPE_EDGE_BOTH>;
-            interrupt-names = "usbin-valid", "chg-gone",
-                              "batt-temp-ok", "batt-hot", "batt-cold",
-                              "fast-chg", "chg-done", "chg-fail",
-                              "vbat-det", "wdog", "batt-inserted";
+            interrupt-names = "chg-gone", "batt-temp-ok", "batt-hot",
+                              "batt-cold", "fast-chg", "chg-done",
+                              "chg-fail", "vbat-det", "wdog",
+                              "batt-inserted";
 
             qcom,max-voltage-mv = <4200>;
             qcom,max-charge-current-ma = <1000>;

@@ -79,8 +79,6 @@
  * @lock:	serialises register accesses
  * @r_sense_mohm:	value of the current sense resistor
  * @batt_psy:	registered battery power supply
- * @volt_uv:	last sampled battery voltage
- * @curr_ua:	last sampled battery current, positive while charging
  */
 struct pm8921_bms {
 	/* must be the first member: the battery helper casts the drvdata */
@@ -92,9 +90,6 @@ struct pm8921_bms {
 	unsigned int		r_sense_mohm;
 
 	struct power_supply	*batt_psy;
-
-	int			volt_uv;
-	int			curr_ua;
 };
 
 static int pm8921_bms_read_output(struct pm8921_bms *bms, unsigned int type,
@@ -196,6 +191,7 @@ out_unlock:
 
 static enum power_supply_property pm8921_bms_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_CHARGE_TYPE,
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_SCOPE,
 	POWER_SUPPLY_PROP_TECHNOLOGY,
@@ -234,6 +230,26 @@ static int pm8921_bms_get_property(struct power_supply *psy,
 	int ret;
 
 	switch (psp) {
+	case POWER_SUPPLY_PROP_STATUS:
+		/*
+		 * The state machine of the charger knows whether a charge
+		 * cycle runs, which is what a user expects to see while a
+		 * cable is plugged in, even when the input cannot cover the
+		 * system load and the pack is still being drained.  Fall
+		 * back to the current based state of the helper when there
+		 * is no charger on this board.
+		 */
+		ret = pm8921_bms_charger_property(psp);
+		if (ret < 0)
+			break;
+		val->intval = ret;
+		return 0;
+	case POWER_SUPPLY_PROP_CHARGE_TYPE:
+		ret = pm8921_bms_charger_property(psp);
+		if (ret < 0)
+			break;
+		val->intval = ret;
+		return 0;
 	case POWER_SUPPLY_PROP_TECHNOLOGY:
 		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
 		return 0;

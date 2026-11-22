@@ -367,15 +367,34 @@ static void pm8921_bms_update(struct pm8921_bms *bms)
 	}
 }
 
+/* direction of the current, with some hysteresis around zero */
+static int pm8921_bms_direction(struct pm8921_bms *bms)
+{
+	if (bms->curr_ua > BMS_REST_CURRENT_UA)
+		return 1;
+	if (bms->curr_ua < -BMS_REST_CURRENT_UA)
+		return -1;
+
+	return 0;
+}
+
 static void pm8921_bms_work(struct work_struct *work)
 {
 	struct pm8921_bms *bms = container_of(to_delayed_work(work),
 					      struct pm8921_bms, work);
-	int prev = bms->capacity;
+	int prev_capacity = bms->capacity;
+	int prev_direction = pm8921_bms_direction(bms);
 
 	pm8921_bms_update(bms);
 
-	if (bms->capacity != prev)
+	/*
+	 * UPower derives the charge state of the battery from the sign of
+	 * the current, and only refreshes it when the kernel says that
+	 * something changed, so notify when the current flows the other way
+	 * as well and not only when the level moves.
+	 */
+	if (bms->capacity != prev_capacity ||
+	    pm8921_bms_direction(bms) != prev_direction)
 		power_supply_changed(bms->batt_psy);
 
 	queue_delayed_work(system_power_efficient_wq, &bms->work,

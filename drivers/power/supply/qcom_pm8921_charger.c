@@ -26,7 +26,7 @@
 
 #include <linux/bitops.h>
 #include <linux/delay.h>
-#include <linux/extcon-provider.h>
+#include <linux/extcon.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/minmax.h>
@@ -136,7 +136,6 @@
 #define PM8921_REVISION_3P0		0x4
 
 enum pm8921_chg_irq_id {
-	PM8921_IRQ_USBIN_VALID,
 	PM8921_IRQ_CHG_GONE,
 	PM8921_IRQ_BATT_TEMP_OK,
 	PM8921_IRQ_BATT_HOT,
@@ -151,7 +150,6 @@ enum pm8921_chg_irq_id {
 };
 
 static const char *const pm8921_chg_irq_names[] = {
-	[PM8921_IRQ_USBIN_VALID] = "usbin-valid",
 	[PM8921_IRQ_CHG_GONE] = "chg-gone",
 	[PM8921_IRQ_BATT_TEMP_OK] = "batt-temp-ok",
 	[PM8921_IRQ_BATT_HOT] = "batt-hot",
@@ -171,7 +169,8 @@ static const char *const pm8921_chg_irq_names[] = {
  * @lock:		serialises register updates and property reads
  * @usb_psy:		registered USB power supply
  * @batt_psy:		registered battery power supply
- * @edev:		extcon device reporting the USB cable to the PHY
+ * @edev:		extcon device reporting the USB cable
+ * @usb_nb:		notifier receiving the cable events of @edev
  * @irqs:		charger interrupt numbers, indexed by pm8921_chg_irq_id
  * @max_voltage_mv:	battery float voltage
  * @resume_delta_mv:	voltage drop below the float voltage that restarts
@@ -190,6 +189,7 @@ struct pm8921_chg {
 	struct power_supply	*usb_psy;
 	struct power_supply	*batt_psy;
 	struct extcon_dev	*edev;
+	struct notifier_block	usb_nb;
 
 	int			irqs[PM8921_IRQ_MAX];
 
@@ -201,11 +201,6 @@ struct pm8921_chg {
 	unsigned int		safety_min;
 
 	bool			usb_online;
-};
-
-static const unsigned int pm8921_chg_extcon_cables[] = {
-	EXTCON_USB,
-	EXTCON_NONE,
 };
 
 /*
@@ -528,7 +523,7 @@ static int pm8921_chg_status(struct pm8921_chg *chg)
 {
 	int fsm, ret;
 
-	if (!pm8921_chg_rt_status(chg, PM8921_IRQ_USBIN_VALID))
+	if (!chg->usb_online)
 		return POWER_SUPPLY_STATUS_DISCHARGING;
 
 	ret = pm8921_chg_rt_status(chg, PM8921_IRQ_BATT_TEMP_OK);
@@ -593,7 +588,7 @@ static int pm8921_chg_usb_get_property(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
 	case POWER_SUPPLY_PROP_PRESENT:
-		val->intval = pm8921_chg_rt_status(chg, PM8921_IRQ_USBIN_VALID) == 1;
+		val->intval = chg->usb_online;
 		break;
 	case POWER_SUPPLY_PROP_STATUS:
 		val->intval = pm8921_chg_status(chg);
@@ -722,12 +717,6 @@ static const struct power_supply_desc pm8921_chg_batt_desc = {
 	.get_property		= pm8921_chg_batt_get_property,
 };
 
-static void pm8921_chg_set_extcon(struct pm8921_chg *chg, bool online)
-{
-	if (chg->edev)
-		extcon_set_state_sync(chg->edev, EXTCON_USB, online);
-}
-
 static void pm8921_chg_notify(struct pm8921_chg *chg)
 {
 	if (chg->usb_psy)
@@ -736,23 +725,22 @@ static void pm8921_chg_notify(struct pm8921_chg *chg)
 		power_supply_changed(chg->batt_psy);
 }
 
-static irqreturn_t pm8921_chg_usbin_isr(int irq, void *data)
+/*
+ * The cable state is watched by the PMIC extcon device (its VBUS valid
+ * comparator sits in the always on power domain), which frees this driver
+ * from owning the interrupt and lets the USB controller share it.
+ */
+static int pm8921_chg_usb_notifier(struct notifier_block *nb,
+				   unsigned long event, void *ptr)
 {
-	struct pm8921_chg *chg = data;
-	bool online;
+	struct pm8921_chg *chg = container_of(nb, struct pm8921_chg, usb_nb);
+	bool online = event;
 
-	online = pm8921_chg_rt_status(chg, PM8921_IRQ_USBIN_VALID) == 1;
-	if (online != chg->usb_online) {
-		chg->usb_online = online;
-		dev_dbg(chg->dev, "USB %s\n", online ? "connected" : "disconnected");
-	}
+	if (online == chg->usb_online)
+		return NOTIFY_DONE;
 
-	/*
-	 * The USB controller cannot detect VBUS on its own once it runtime
-	 * suspends (its interrupt is off), so the cable state is handed over
-	 * to it through the extcon instead.
-	 */
-	pm8921_chg_set_extcon(chg, online);
+	chg->usb_online = online;
+	dev_dbg(chg->dev, "USB %s\n", online ? "connected" : "disconnected");
 
 	if (online) {
 		mutex_lock(&chg->lock);
@@ -768,7 +756,7 @@ static irqreturn_t pm8921_chg_usbin_isr(int irq, void *data)
 
 	pm8921_chg_notify(chg);
 
-	return IRQ_HANDLED;
+	return NOTIFY_OK;
 }
 
 static irqreturn_t pm8921_chg_isr(int irq, void *data)
@@ -776,9 +764,8 @@ static irqreturn_t pm8921_chg_isr(int irq, void *data)
 	struct pm8921_chg *chg = data;
 
 	dev_dbg(chg->dev, "event: usb=%d fsm=%d status=%d health=%d\n",
-		pm8921_chg_rt_status(chg, PM8921_IRQ_USBIN_VALID),
-		pm8921_chg_get_fsm_state(chg), pm8921_chg_status(chg),
-		pm8921_chg_health(chg));
+		chg->usb_online, pm8921_chg_get_fsm_state(chg),
+		pm8921_chg_status(chg), pm8921_chg_health(chg));
 
 	pm8921_chg_notify(chg);
 
@@ -888,7 +875,7 @@ static int pm8921_chg_probe(struct platform_device *pdev)
 
 	/*
 	 * Resolve the interrupts first: the real time state of the charger
-	 * (USB present, battery present) is read through them, so they are
+	 * (battery present, temperature) is read through them, so they are
 	 * needed before the power supplies can answer a single property.
 	 */
 	for (i = 0; i < PM8921_IRQ_MAX; i++) {
@@ -899,20 +886,12 @@ static int pm8921_chg_probe(struct platform_device *pdev)
 					     pm8921_chg_irq_names[i]);
 	}
 
-	chg->usb_online = pm8921_chg_rt_status(chg, PM8921_IRQ_USBIN_VALID) == 1;
-
-	chg->edev = devm_extcon_dev_allocate(&pdev->dev,
-					     pm8921_chg_extcon_cables);
+	chg->edev = extcon_get_edev_by_phandle(&pdev->dev, 0);
 	if (IS_ERR(chg->edev))
 		return dev_err_probe(&pdev->dev, PTR_ERR(chg->edev),
-				     "failed to allocate the USB extcon\n");
+				     "failed to get the USB extcon\n");
 
-	ret = devm_extcon_dev_register(&pdev->dev, chg->edev);
-	if (ret)
-		return dev_err_probe(&pdev->dev, ret,
-				     "failed to register the USB extcon\n");
-
-	pm8921_chg_set_extcon(chg, chg->usb_online);
+	chg->usb_online = extcon_get_state(chg->edev, EXTCON_USB) > 0;
 
 	psy_cfg.drv_data = chg;
 	psy_cfg.fwnode = dev_fwnode(&pdev->dev);
@@ -939,9 +918,7 @@ static int pm8921_chg_probe(struct platform_device *pdev)
 	for (i = 0; i < PM8921_IRQ_MAX; i++) {
 		irq_handler_t handler = pm8921_chg_isr;
 
-		if (i == PM8921_IRQ_USBIN_VALID)
-			handler = pm8921_chg_usbin_isr;
-		else if (i == PM8921_IRQ_WDOG)
+		if (i == PM8921_IRQ_WDOG)
 			handler = pm8921_chg_wdog_isr;
 		else if (i == PM8921_IRQ_CHG_GONE)
 			handler = pm8921_chg_chg_gone_isr;
@@ -962,7 +939,14 @@ static int pm8921_chg_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	chg->usb_online = pm8921_chg_rt_status(chg, PM8921_IRQ_USBIN_VALID) == 1;
+	chg->usb_nb.notifier_call = pm8921_chg_usb_notifier;
+	ret = devm_extcon_register_notifier(&pdev->dev, chg->edev, EXTCON_USB,
+					    &chg->usb_nb);
+	if (ret)
+		return dev_err_probe(&pdev->dev, ret,
+				     "failed to watch the USB extcon\n");
+
+	chg->usb_online = extcon_get_state(chg->edev, EXTCON_USB) > 0;
 	chg->iusb_max_ma = pm8921_chg_get_iusb_max(chg);
 
 	dev_dbg(&pdev->dev, "USB %s, input limit %umA\n",

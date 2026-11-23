@@ -374,6 +374,13 @@ static int aries_720p_enable(struct drm_panel *panel)
 	 * the DSI video engine.
 	 */
 	aries_720p_dsi_sw_reset(ctx);
+
+	/*
+	 * Right after the soft reset the DSI engine can push a few frames of
+	 * garbage until the MDP has handed it valid pixels.  Keep the
+	 * backlight off across that window so the noise is never visible.
+	 */
+	msleep(100);
 	aries_720p_backlight_restore(ctx);
 
 	return 0;

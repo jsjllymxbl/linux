@@ -22,6 +22,8 @@ struct apq8064_tabla {
 	struct gpio_desc *spk_en2;
 	struct snd_soc_jack headphone_jack;
 	struct snd_soc_jack_gpio headphone_gpio;
+	struct snd_soc_dapm_route *routes;
+	unsigned int num_routes;
 };
 
 static int apq8064_tabla_spk_event(struct snd_soc_dapm_widget *w,
@@ -61,20 +63,61 @@ static const struct snd_soc_dapm_widget apq8064_tabla_widgets[] = {
 	SND_SOC_DAPM_HP("Headphone", NULL),
 };
 
-static const struct snd_soc_dapm_route apq8064_tabla_routes[] = {
-	{ "Speaker Amplifier", NULL, "LINEOUT2" },
-	{ "Speaker Amplifier", NULL, "LINEOUT4" },
-	{ "Speaker", NULL, "Speaker Amplifier" },
-	{ "Earpiece", NULL, "EAR" },
-	{ "Headphone", NULL, "HPHL" },
-	{ "Headphone", NULL, "HPHR" },
-};
+static int apq8064_tabla_parse_routes(struct apq8064_tabla *priv,
+				      struct device *dev)
+{
+	static const char * const defaults[] = { "LINEOUT2", "LINEOUT4" };
+	struct snd_soc_dapm_route *routes;
+	unsigned int nsources = ARRAY_SIZE(defaults);
+	unsigned int n = 0;
+	int count, i, ret;
 
-/* Only dual-amplifier boards wire the additional LINEOUT1/3 pair. */
-static const struct snd_soc_dapm_route apq8064_tabla_bottom_routes[] = {
-	{ "Speaker Amplifier", NULL, "LINEOUT1" },
-	{ "Speaker Amplifier", NULL, "LINEOUT3" },
-};
+	count = of_property_count_strings(dev->of_node, "speaker-lineouts");
+	if (count < 0 && count != -ENOENT)
+		return dev_err_probe(dev, count,
+				     "failed to count speaker-lineouts\n");
+	if (count > 4)
+		return dev_err_probe(dev, -EINVAL,
+				     "too many speaker-lineouts\n");
+	if (count > 0)
+		nsources = count;
+
+	routes = devm_kcalloc(dev, nsources + 4, sizeof(*routes), GFP_KERNEL);
+	if (!routes)
+		return -ENOMEM;
+
+	for (i = 0; i < nsources; i++) {
+		const char *source;
+
+		if (count > 0) {
+			ret = of_property_read_string_index(dev->of_node,
+							    "speaker-lineouts",
+							    i, &source);
+			if (ret)
+				return ret;
+		} else {
+			source = defaults[i];
+		}
+
+		routes[n++] = (struct snd_soc_dapm_route){
+			.sink = "Speaker Amplifier",
+			.source = source,
+		};
+	}
+
+	routes[n++] = (struct snd_soc_dapm_route){
+		.sink = "Speaker", .source = "Speaker Amplifier" };
+	routes[n++] = (struct snd_soc_dapm_route){
+		.sink = "Earpiece", .source = "EAR" };
+	routes[n++] = (struct snd_soc_dapm_route){
+		.sink = "Headphone", .source = "HPHL" };
+	routes[n++] = (struct snd_soc_dapm_route){
+		.sink = "Headphone", .source = "HPHR" };
+
+	priv->routes = routes;
+	priv->num_routes = n;
+	return 0;
+}
 
 static int apq8064_tabla_link_init(struct snd_soc_pcm_runtime *rtd)
 {
@@ -88,13 +131,6 @@ static int apq8064_tabla_link_init(struct snd_soc_pcm_runtime *rtd)
 					 0, NULL, ARRAY_SIZE(rx_slots), rx_slots);
 	if (ret)
 		return ret;
-
-	if (priv->spk_en2) {
-		ret = snd_soc_dapm_add_routes(dapm, apq8064_tabla_bottom_routes,
-					    ARRAY_SIZE(apq8064_tabla_bottom_routes));
-		if (ret)
-			return ret;
-	}
 
 	/* Start with the rear speaker; other outputs are selected explicitly. */
 	ret = snd_soc_dapm_enable_pin(dapm, "Speaker");
@@ -213,9 +249,13 @@ static int apq8064_tabla_probe(struct platform_device *pdev)
 	card->num_controls = ARRAY_SIZE(apq8064_tabla_controls);
 	card->dapm_widgets = apq8064_tabla_widgets;
 	card->num_dapm_widgets = ARRAY_SIZE(apq8064_tabla_widgets);
-	card->dapm_routes = apq8064_tabla_routes;
-	card->num_dapm_routes = ARRAY_SIZE(apq8064_tabla_routes);
 	snd_soc_card_set_drvdata(card, priv);
+
+	ret = apq8064_tabla_parse_routes(priv, dev);
+	if (ret)
+		return ret;
+	card->dapm_routes = priv->routes;
+	card->num_dapm_routes = priv->num_routes;
 
 	ret = snd_soc_of_parse_card_name(card, "model");
 	if (ret)

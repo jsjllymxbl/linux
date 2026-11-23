@@ -39,6 +39,22 @@ properties:
     maxItems: 1
     description: Active-high enable for the external speaker amplifier
 
+  speaker-lineouts:
+    $ref: /schemas/types.yaml#/definitions/string-array
+    description: |
+      Codec LINEOUT widgets feeding the external speaker amplifier(s).
+      List every lineout used, including those of an optional second
+      amplifier enabled by speaker-bottom-en-gpios.  Defaults to
+      LINEOUT2/LINEOUT4 when omitted.
+    items:
+      enum:
+        - LINEOUT1
+        - LINEOUT2
+        - LINEOUT3
+        - LINEOUT4
+        - LINEOUT5
+    maxItems: 4
+
 required:
   - compatible
   - model

@@ -10,6 +10,7 @@
  */
 
 #include <linux/i2c.h>
+#include <linux/kernel.h>
 #include <linux/leds.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
@@ -236,6 +237,25 @@ static void lm3530_led_disable(struct lm3530_data *drvdata)
 	drvdata->enable = false;
 }
 
+/*
+ * The brightness register programs the LED current linearly, but this
+ * panel's backlight emits very little light at low currents.  Apply a
+ * gamma 2.0 curve at the hardware boundary so low brightness settings are
+ * usable, while keeping the LED class value linear for userspace.
+ */
+static u8 lm3530_brightness_to_reg(struct lm3530_data *drvdata,
+				   enum led_brightness brightness)
+{
+	unsigned int max = drvdata->led_dev.max_brightness;
+
+	if (!brightness)
+		return 0;
+	if (brightness >= max)
+		return max;
+
+	return int_sqrt(brightness * max);
+}
+
 static int lm3530_init_registers(struct lm3530_data *drvdata)
 {
 	int ret = 0;
@@ -283,7 +303,7 @@ static int lm3530_init_registers(struct lm3530_data *drvdata)
 	reg_val[1] = als.config;	/* LM3530_ALS_CONFIG */
 	reg_val[2] = brt_ramp;		/* LM3530_BRT_RAMP_RATE */
 	reg_val[3] = als.imp_sel;	/* LM3530_ALS_IMP_SELECT */
-	reg_val[4] = brightness;	/* LM3530_BRT_CTRL_REG */
+	reg_val[4] = lm3530_brightness_to_reg(drvdata, brightness);
 	reg_val[5] = als.zones[0];	/* LM3530_ALS_ZB0_REG */
 	reg_val[6] = als.zones[1];	/* LM3530_ALS_ZB1_REG */
 	reg_val[7] = als.zones[2];	/* LM3530_ALS_ZB2_REG */
@@ -341,7 +361,8 @@ static void lm3530_brightness_set(struct led_classdev *led_cdev,
 
 		/* set the brightness in brightness control register*/
 		err = i2c_smbus_write_byte_data(drvdata->client,
-				LM3530_BRT_CTRL_REG, brt_val);
+				LM3530_BRT_CTRL_REG,
+				lm3530_brightness_to_reg(drvdata, brt_val));
 		if (err)
 			dev_err(&drvdata->client->dev,
 				"Unable to set brightness: %d\n", err);

@@ -13,7 +13,8 @@ description: |
   The LM3530 is an I2C controlled white LED backlight driver with an
   optional hardware enable (EN) pin.  The brightness register is written
   over I2C (manual mode); a fixed function LED named "lcd-backlight" is
-  registered in sysfs.
+  registered in sysfs.  Brightness values are mapped through a gamma 2.0
+  curve before being written to the linear current register.
 
 allOf:
   - $ref: /schemas/leds/common.yaml#

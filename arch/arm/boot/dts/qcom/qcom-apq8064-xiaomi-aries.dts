@@ -279,9 +279,11 @@
 	 * The full scale current of 22 mA follows the downstream board
 	 * file (GEN_CONFIG max_current code 5).
 	 */
-	backlight@38 {
+	lm3530_backlight: backlight@38 {
 		compatible = "national,lm3530";
 		reg = <0x38>;
+
+		label = "lcd-backlight";
 
 		pinctrl-names = "default";
 		pinctrl-0 = <&lm3530_backlight_default>;

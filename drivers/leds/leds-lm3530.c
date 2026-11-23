@@ -456,6 +456,7 @@ static int lm3530_probe(struct i2c_client *client)
 {
 	struct lm3530_platform_data *pdata = lm3530_get_pdata(client);
 	struct lm3530_data *drvdata;
+	struct led_init_data init_data = {};
 	int err = 0;
 
 	if (pdata == NULL) {
@@ -516,7 +517,17 @@ static int lm3530_probe(struct i2c_client *client)
 			return err;
 		}
 	}
-	err = led_classdev_register(&client->dev, &drvdata->led_dev);
+	/*
+	 * Attach the DT node to the LED class device so that consumers such
+	 * as the panel driver can resolve it through "leds"/"led-names".
+	 */
+	if (client->dev.of_node) {
+		init_data.fwnode = of_fwnode_handle(client->dev.of_node);
+		err = led_classdev_register_ext(&client->dev, &drvdata->led_dev,
+						&init_data);
+	} else {
+		err = led_classdev_register(&client->dev, &drvdata->led_dev);
+	}
 	if (err < 0) {
 		dev_err(&client->dev, "Register led class failed: %d\n", err);
 		return err;

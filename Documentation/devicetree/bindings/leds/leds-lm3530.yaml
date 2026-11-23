@@ -15,6 +15,9 @@ description: |
   over I2C (manual mode); a fixed function LED named "lcd-backlight" is
   registered in sysfs.
 
+allOf:
+  - $ref: /schemas/leds/common.yaml#
+
 properties:
   compatible:
     const: national,lm3530
@@ -39,6 +42,12 @@ properties:
 
   vin-supply: true
 
+  label:
+    $ref: /schemas/types.yaml#/definitions/string
+    description:
+      Name of the LED class device.  Use this to keep the legacy
+      "lcd-backlight" sysfs name when registering with a fwnode.
+
 required:
   - compatible
   - reg
@@ -57,6 +66,7 @@ examples:
             compatible = "national,lm3530";
             reg = <0x38>;
 
+            label = "lcd-backlight";
             enable-gpios = <&gpio 13 GPIO_ACTIVE_HIGH>;
             led-max-microamp = <22000>;
         };

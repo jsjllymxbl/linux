@@ -19,6 +19,7 @@ description: |
 
 allOf:
   - $ref: panel-common.yaml#
+  - $ref: /schemas/leds/leds-consumer.yaml#
 
 properties:
   compatible:
@@ -55,6 +56,17 @@ examples:
   - |
     #include <dt-bindings/gpio/gpio.h>
 
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        lm3530_backlight: backlight@38 {
+            compatible = "national,lm3530";
+            reg = <0x38>;
+            label = "lcd-backlight";
+        };
+    };
+
     dsi {
         #address-cells = <1>;
         #size-cells = <0>;
@@ -68,6 +80,9 @@ examples:
 
             reset-gpios = <&pm8921_gpio 25 GPIO_ACTIVE_LOW>;
             lcd-id-gpios = <&pm8921_gpio 12 GPIO_ACTIVE_HIGH>;
+
+            leds = <&lm3530_backlight>;
+            led-names = "backlight";
 
             port {
                 panel_in: endpoint {

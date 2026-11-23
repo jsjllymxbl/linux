@@ -37,6 +37,7 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/kernel.h>
+#include <linux/leds.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
@@ -139,6 +140,9 @@ struct aries_720p {
 	struct gpio_desc *reset_gpio;	/* PM8921 GPIO25, DISP_RESET_N, active low */
 	struct gpio_desc *lcd_id_gpio;	/* PM8921 GPIO12, LCD_ID_DET */
 
+	struct led_classdev *backlight;	/* LM3530 "lcd-backlight" */
+	unsigned int saved_brightness;	/* brightness before the last blank */
+
 	struct mutex mutex; /* protects ->prepared */
 	bool prepared;
 
@@ -189,6 +193,40 @@ static int aries_720p_send_cmds(struct aries_720p *ctx,
 	}
 
 	return 0;
+}
+
+/*
+ * The LM3530 holds its EN pin (PM8921 GPIO13) high for as long as its LED
+ * brightness is non-zero, independently of the DSI/panel state.  Downstream
+ * clears the brightness in the panel off path; do the same here so that a
+ * DPMS-off does not leave the backlight on.  LM3530 only implements
+ * .brightness_set, so use led_set_brightness() to actually program it.
+ */
+static void aries_720p_backlight_off(struct aries_720p *ctx)
+{
+	unsigned int brightness;
+
+	if (!ctx->backlight)
+		return;
+
+	brightness = ctx->backlight->brightness;
+	if (!brightness)
+		return;
+
+	ctx->saved_brightness = brightness;
+	led_set_brightness(ctx->backlight, LED_OFF);
+}
+
+static void aries_720p_backlight_restore(struct aries_720p *ctx)
+{
+	if (!ctx->backlight || !ctx->saved_brightness)
+		return;
+
+	/* Do not override a brightness change made while the screen was off. */
+	if (!ctx->backlight->brightness)
+		led_set_brightness(ctx->backlight, ctx->saved_brightness);
+
+	ctx->saved_brightness = 0;
 }
 
 /*
@@ -255,6 +293,7 @@ out:
 	return ret;
 
 err_poweroff:
+	aries_720p_backlight_off(ctx);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 	regulator_disable(ctx->vsp);
 	usleep_range(10000, 11000);
@@ -275,6 +314,8 @@ static int aries_720p_unprepare(struct drm_panel *panel)
 		mutex_unlock(&ctx->mutex);
 		return 0;
 	}
+
+	aries_720p_backlight_off(ctx);
 
 	/* assert reset: DISP_RESET_N physical low */
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
@@ -333,19 +374,23 @@ static int aries_720p_enable(struct drm_panel *panel)
 	 * the DSI video engine.
 	 */
 	aries_720p_dsi_sw_reset(ctx);
+	aries_720p_backlight_restore(ctx);
 
 	return 0;
 }
 
 /*
- * Deliberately empty.  disable() runs while the DSI video engine is still
- * streaming, and any command write at that point wedges the APQ8064
- * command engine -- which hangs the entire (pre)suspend path.  The panel
- * is switched off by the power cycle in unprepare(), which resets the IC
- * out of video mode anyway.
+ * disable() runs while the DSI video engine is still streaming, so no DCS
+ * command is sent here (that would wedge the APQ8064 command engine and
+ * hang the (pre)suspend path).  Turning the LM3530 off is safe: it only
+ * touches its enable GPIO and I2C brightness register.
  */
 static int aries_720p_disable(struct drm_panel *panel)
 {
+	struct aries_720p *ctx = to_aries_720p(panel);
+
+	aries_720p_backlight_off(ctx);
+
 	return 0;
 }
 
@@ -412,6 +457,11 @@ static int aries_720p_probe(struct mipi_dsi_device *dsi)
 	if (IS_ERR(ctx->lcd_id_gpio))
 		return dev_err_probe(dev, PTR_ERR(ctx->lcd_id_gpio),
 				     "failed to get lcd-id-gpios\n");
+
+	ctx->backlight = devm_led_get(dev, "backlight");
+	if (IS_ERR(ctx->backlight))
+		return dev_err_probe(dev, PTR_ERR(ctx->backlight),
+				     "failed to get backlight LED\n");
 
 	dsi->lanes = 4;
 	dsi->format = MIPI_DSI_FMT_RGB888;

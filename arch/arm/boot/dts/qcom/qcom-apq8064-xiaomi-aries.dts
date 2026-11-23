@@ -210,6 +210,10 @@
 		reset-gpios = <&pm8921_gpio 25 GPIO_ACTIVE_LOW>;
 		lcd-id-gpios = <&pm8921_gpio 12 GPIO_ACTIVE_HIGH>;
 
+		/* LM3530 EN (PM8921 GPIO13) must follow panel DPMS */
+		leds = <&lm3530_backlight>;
+		led-names = "backlight";
+
 		port {
 			panel_in: endpoint {
 				remote-endpoint = <&dsi0_out>;

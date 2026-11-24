@@ -61,6 +61,13 @@ static const struct snd_soc_dapm_widget apq8064_tabla_widgets[] = {
 	SND_SOC_DAPM_SPK("Speaker", NULL),
 	SND_SOC_DAPM_SPK("Earpiece", NULL),
 	SND_SOC_DAPM_HP("Headphone", NULL),
+	/*
+	 * Always-on sinks that stop at the codec DACs.  They pin the shared
+	 * SLIMbus RX / interpolator / bias chain while UCM switches the real
+	 * board outputs, without driving any speaker or headphone PA.
+	 */
+	SND_SOC_DAPM_SPK("RX1 Keepalive", NULL),
+	SND_SOC_DAPM_SPK("RX2 Keepalive", NULL),
 };
 
 static int apq8064_tabla_parse_routes(struct apq8064_tabla *priv,
@@ -82,7 +89,7 @@ static int apq8064_tabla_parse_routes(struct apq8064_tabla *priv,
 	if (count > 0)
 		nsources = count;
 
-	routes = devm_kcalloc(dev, nsources + 4, sizeof(*routes), GFP_KERNEL);
+	routes = devm_kcalloc(dev, nsources + 6, sizeof(*routes), GFP_KERNEL);
 	if (!routes)
 		return -ENOMEM;
 
@@ -113,6 +120,10 @@ static int apq8064_tabla_parse_routes(struct apq8064_tabla *priv,
 		.sink = "Headphone", .source = "HPHL" };
 	routes[n++] = (struct snd_soc_dapm_route){
 		.sink = "Headphone", .source = "HPHR" };
+	routes[n++] = (struct snd_soc_dapm_route){
+		.sink = "RX1 Keepalive", .source = "HPHL DAC" };
+	routes[n++] = (struct snd_soc_dapm_route){
+		.sink = "RX2 Keepalive", .source = "HPHR DAC" };
 
 	priv->routes = routes;
 	priv->num_routes = n;
@@ -132,6 +143,14 @@ static int apq8064_tabla_link_init(struct snd_soc_pcm_runtime *rtd)
 	if (ret)
 		return ret;
 
+	/* Pin the shared RX chain before selecting a board output. */
+	ret = snd_soc_dapm_enable_pin(dapm, "RX1 Keepalive");
+	if (ret)
+		return ret;
+	ret = snd_soc_dapm_enable_pin(dapm, "RX2 Keepalive");
+	if (ret)
+		return ret;
+
 	/* Start with the rear speaker; other outputs are selected explicitly. */
 	ret = snd_soc_dapm_enable_pin(dapm, "Speaker");
 	if (ret)
@@ -147,12 +166,9 @@ static int apq8064_tabla_link_init(struct snd_soc_pcm_runtime *rtd)
 		return 0;
 
 	/*
-	 * Report the jack state to userspace only. Do not let the jack drive
-	 * the "Headphone" DAPM pin from its IRQ work: that tears the headphone
-	 * chain down while the PCM is still streaming into it, which leaves
-	 * the SLIMbus RX transport stuck and silences the rear speaker until
-	 * an RX1 stream is restarted. UCM owns the pin through the
-	 * Headphone Switch control and changes it only after the stream moved.
+	 * Report the jack state to userspace only.  UCM owns the output pins;
+	 * the keepalive sinks above keep the SLIMbus RX chain powered across
+	 * those switches, even while a stream is active.
 	 */
 	ret = snd_soc_card_jack_new(card, "Headphone Jack", SND_JACK_HEADPHONE,
 				    &priv->headphone_jack);
